@@ -213,8 +213,9 @@ esp_err_t odroid_sdcard_open(const char* base_path)
     	sdmmc_card_t* card;
     	ret = esp_vfs_fat_sdmmc_mount(base_path, &host, &slot_config, &mount_config, &card);
 
-    	if (ret == ESP_OK)
+    	if (ret == ESP_OK || ret == ESP_ERR_INVALID_STATE)
         {
+            ret = ESP_OK;
             isOpen = true;
         }
         else

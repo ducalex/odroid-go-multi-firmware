@@ -20,6 +20,13 @@
 #include "../components/ugui/ugui.h"
 
 
+
+#define TILE_WIDTH (86)
+#define TILE_HEIGHT (48)
+#define TILE_LENGTH (TILE_WIDTH * TILE_HEIGHT * 2)
+
+static RTC_NOINIT_ATTR int set_boot_needed = 0;
+
 const char* SD_CARD = "/sd";
 //const char* HEADER = "ODROIDGO_FIRMWARE_V00_00";
 const char* HEADER_V00_01 = "ODROIDGO_FIRMWARE_V00_01";
@@ -57,10 +64,7 @@ int fileCount;
 const char* path = "/sd/odroid/firmware";
 char* VERSION = NULL;
 
-#define TILE_WIDTH (86)
-#define TILE_HEIGHT (48)
-#define TILE_LENGTH (TILE_WIDTH * TILE_HEIGHT * 2)
-//uint8_t TileData[TILE_LENGTH];
+esp_err_t sdcardret;
 
 
 void indicate_error()
@@ -402,7 +406,7 @@ static void write_partition_table(odroid_partition_t* parts, size_t parts_count)
         indicate_error();
     }
 
-    esp_partition_reload_table();
+    //esp_partition_reload_table();
 }
 
 
@@ -914,8 +918,10 @@ void flash_firmware(const char* fullPath)
     ili9341_clear(0x0000);
 
     // boot firmware
-    boot_application();
-
+    //boot_application();
+    set_boot_needed = 1;
+    esp_restart();
+    
     indicate_error();
 }
 
@@ -1050,6 +1056,13 @@ const char* ui_choose_file(const char* path)
     files = 0;
     fileCount = odroid_sdcard_files_get(path, ".fw", &files);
     printf("%s: fileCount=%d\n", __func__, fileCount);
+    
+    // Check SD card
+    if (sdcardret != ESP_OK)
+    {
+        DisplayError("SD CARD ERROR");
+        indicate_error();
+    }
 
     // At least one firmware must be available
     if (fileCount < 1)
@@ -1216,6 +1229,11 @@ static void menu_main()
 
 void app_main(void)
 {
+    if (set_boot_needed == 1) {
+        set_boot_needed = 0;
+        boot_application();
+    }
+    
     const char* VER_PREFIX = "Ver: ";
     size_t ver_size = strlen(VER_PREFIX) + strlen(COMPILEDATE) + 1 + strlen(GITREV) + 1;
     VERSION = malloc(ver_size);
@@ -1237,6 +1255,7 @@ void app_main(void)
     gpio_set_direction(GPIO_NUM_2, GPIO_MODE_OUTPUT);
     gpio_set_level(GPIO_NUM_2, 1);
 
+    sdcardret = odroid_sdcard_open(SD_CARD); // before LCD
 
     ili9341_init();
     ili9341_clear(0xffff);
