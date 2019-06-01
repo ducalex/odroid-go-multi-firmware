@@ -1,4 +1,5 @@
 build/
+.vscode/
 sdkconfig.old
 firmware.fw
 *.gch

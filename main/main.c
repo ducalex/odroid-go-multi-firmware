@@ -19,11 +19,22 @@
 
 #include "../components/ugui/ugui.h"
 
+#define USE_PATCHED_ESP_IDF // comment if you don't have esp_partition_reload_table()
 
+#define ESP_PARTITION_TABLE_OFFSET CONFIG_PARTITION_TABLE_OFFSET /* Offset of partition table. Backwards-compatible name.*/
+#define ESP_PARTITION_TABLE_MAX_LEN 0xC00 /* Maximum length of partition table data */
+#define ESP_PARTITION_TABLE_MAX_ENTRIES (ESP_PARTITION_TABLE_MAX_LEN / sizeof(esp_partition_info_t)) /* Maximum length of partition table data, including terminating entry */
+
+#define PART_SUBTYPE_FACTORY 0x00
+#define PART_SUBTYPE_FACTORY_DATA 0xFE
+
+#define PARTS_MAX 20
 
 #define TILE_WIDTH (86)
 #define TILE_HEIGHT (48)
 #define TILE_LENGTH (TILE_WIDTH * TILE_HEIGHT * 2)
+
+#define APP_MAGIC 0x1205
 
 static RTC_NOINIT_ATTR int set_boot_needed = 0;
 
@@ -52,7 +63,28 @@ typedef struct
     uint32_t length;
 } odroid_partition_t;
 
+typedef struct
+{
+    uint16_t magic;
+    uint32_t startOffset;
+    uint32_t endOffset;
+    char description[FIRMWARE_DESCRIPTION_SIZE];
+    odroid_partition_t parts[PARTS_MAX];
+    uint8_t parts_count;
+    uint8_t tile[TILE_LENGTH];
+    uint8_t _reserved[256];
+} odroid_app_t;
+
 // ------
+
+static odroid_app_t* apps;
+static int apps_count = -1;
+static int apps_max = 4;
+
+static esp_partition_info_t* partition_data;
+static int partition_count = -1;
+static int startTableEntry = -1;
+static int startFlashAddress = -1;
 
 uint16_t fb[320 * 240];
 UG_GUI gui;
@@ -65,6 +97,10 @@ const char* path = "/sd/odroid/firmware";
 char* VERSION = NULL;
 
 esp_err_t sdcardret;
+
+
+static void ui_draw_title(const char*);
+static void ui_draw_footer(const char*);
 
 
 void indicate_error()
@@ -263,6 +299,9 @@ void boot_application()
         DisplayError("BOOT SET ERROR");
         indicate_error();
     }
+    
+    // clear framebuffer
+    ili9341_clear(0x0000);
 
     backlight_deinit();
     
@@ -271,55 +310,154 @@ void boot_application()
 }
 
 
-#define ESP_PARTITION_TABLE_OFFSET CONFIG_PARTITION_TABLE_OFFSET /* Offset of partition table. Backwards-compatible name.*/
-#define ESP_PARTITION_TABLE_MAX_LEN 0xC00 /* Maximum length of partition table data */
-#define ESP_PARTITION_TABLE_MAX_ENTRIES (ESP_PARTITION_TABLE_MAX_LEN / sizeof(esp_partition_info_t)) /* Maximum length of partition table data, including terminating entry */
-
-#define PART_TYPE_APP 0x00
-#define PART_SUBTYPE_FACTORY 0x00
-
-static void print_partitions()
+static void read_app_table()
 {
-    const esp_partition_info_t* partition_data = (const esp_partition_info_t*)malloc(ESP_PARTITION_TABLE_MAX_LEN);
-    if (!partition_data) abort();
-
     esp_err_t err;
+    
+    apps_count = 0;
+    
+    esp_partition_t *app_table_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, PART_SUBTYPE_FACTORY_DATA, NULL);
 
-    err = spi_flash_read(ESP_PARTITION_TABLE_OFFSET, (void*)partition_data, ESP_PARTITION_TABLE_MAX_LEN);
-    if (err != ESP_OK) abort();
+    startFlashAddress = app_table_part->address + app_table_part->size;
 
-    for (int i = 0; i < ESP_PARTITION_TABLE_MAX_ENTRIES; ++i)
-    {
-        const esp_partition_info_t *part = &partition_data[i];
-        if (part->magic == 0xffff) break;
-
-        printf("part %d:\n", i);
-
-
-        printf("\tmagic=%#06x\n", part->magic);
-        printf("\ttype=%#04x\n", part->type);
-        printf("\tsubtype=%#04x\n", part->subtype);
-        printf("\t[pos.offset=%#010x, pos.size=%#010x]\n", part->pos.offset, part->pos.size);
-        printf("\tlabel='%-16s'\n", part->label);
-        printf("\tflags=%#010x\n", part->flags);
-        printf("\n");
+    if (!app_table_part) {
+        abort();
+    }
+    
+    apps_max = (app_table_part->size / sizeof(odroid_app_t));
+    
+    printf("Max apps: %d\n", apps_max);
+    if (!apps) {
+        apps = malloc(app_table_part->size);
     }
 
-}
-
-static void write_partition_table(odroid_partition_t* parts, size_t parts_count)
-{
-    esp_err_t err;
-
-
-    // Read table
-    const esp_partition_info_t* partition_data = (const esp_partition_info_t*)malloc(ESP_PARTITION_TABLE_MAX_LEN);
-    if (!partition_data)
-    {
-        DisplayError("TABLE MEMORY ERROR");
+    if (!apps) {
+        DisplayError("APP TABLE ALLOC ERROR");
         indicate_error();
     }
 
+    err = esp_partition_read(app_table_part, 0, (void*)apps, app_table_part->size);
+    if (err != ESP_OK)
+    {
+        DisplayError("APP TABLE READ ERROR");
+        indicate_error();
+    }
+    
+    for (int i = 0; i < apps_max; i++) {
+        if (apps[i].magic != APP_MAGIC) {
+            break;
+        }
+        if (apps[i].endOffset + 1 > startFlashAddress) {
+            startFlashAddress = apps[i].endOffset + 1;
+        }
+        apps_count++;
+    }
+
+    //65K align the address, the flashing code below complains otherwise. will investigate later.
+    if ((startFlashAddress & 0xffff) != 0) {
+        startFlashAddress = (startFlashAddress & 0xffff0000) + 0xffff + 1;
+    }
+    
+    printf("App count: %d\n", apps_count);
+}
+
+
+static void write_app_table()
+{
+    esp_err_t err;
+
+    esp_partition_t *app_table_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, PART_SUBTYPE_FACTORY_DATA, NULL);
+
+    if (!app_table_part || !apps) {
+        read_app_table();
+    }
+    
+    for (int i = apps_count; i < apps_max; ++i)
+    {
+        memset(&apps[i], 0xff, sizeof(odroid_app_t));
+    }
+
+    err = esp_partition_erase_range(app_table_part, 0, app_table_part->size);
+    if (err != ESP_OK)
+    {
+        DisplayError("APP TABLE ERASE ERROR");
+        indicate_error();
+    }
+
+    err = esp_partition_write(app_table_part, 0, (void*)apps, app_table_part->size);
+    if (err != ESP_OK)
+    {
+        DisplayError("APP TABLE WRITE ERROR");
+        indicate_error();
+    }
+
+    printf("Written app table %d\n", apps_count);
+}
+
+
+static void remove_app(uint8_t index)
+{
+    //memset(&apps[index], 0xFF, sizeof(odroid_app_t));
+    
+    if (index == apps_count -1) { // It's the last one, easy then!
+        apps_count--;
+    }
+    else { // We must defrag
+        odroid_app_t *app = &apps[index];
+        size_t newFlashOffset = app->startOffset;
+        size_t deletedappsize = app->endOffset - app->startOffset + 1;
+        size_t flashEnd = apps[apps_count - 1].endOffset + 1;
+
+        printf("delete size: %d\n", deletedappsize);
+
+        // Remove item
+        for (int i = index + 1; i < apps_count; i++) {
+            memcpy(&apps[i - 1], &apps[i], sizeof(odroid_app_t));
+        }
+        apps_count--;
+        
+        // Adjust offsets for other apps
+        for (int i = index; i < apps_count; i++) {
+            apps[i].startOffset -= deletedappsize;
+            apps[i].endOffset -= deletedappsize;
+        }
+        
+        // Defrag flash to match the new offsets
+        uint8_t *buffer = malloc(4096);
+
+        for (size_t i = newFlashOffset; i < flashEnd; i += 4096) {
+            printf("Moving %x to %x\n", i + deletedappsize, i);
+            spi_flash_read(i + deletedappsize, buffer, 4096);
+            spi_flash_erase_range(i, 4096);
+            spi_flash_write(i, buffer, 4096);
+            DisplayProgress((float) (i - newFlashOffset) / (float)(flashEnd - newFlashOffset)  * 100.0);
+            UpdateDisplay();
+        }
+
+        free(buffer);
+    }
+
+    if (apps_count > 0) {
+        startFlashAddress = apps[apps_count-1].endOffset + 1;
+    }
+
+    write_app_table();
+}
+
+
+
+static void read_partition_table()
+{
+    esp_err_t err;
+
+    partition_count = 0;
+    
+    if (!partition_data)
+    {
+        partition_data = (const esp_partition_info_t*)malloc(ESP_PARTITION_TABLE_MAX_LEN);
+    }
+
+    // Read table
     err = spi_flash_read(ESP_PARTITION_TABLE_OFFSET, (void*)partition_data, ESP_PARTITION_TABLE_MAX_LEN);
     if (err != ESP_OK)
     {
@@ -328,8 +466,6 @@ static void write_partition_table(odroid_partition_t* parts, size_t parts_count)
     }
 
     // Find end of first partitioned
-    int startTableEntry = -1;
-    size_t startFlashAddress = 0xffffffff;
 
     for (int i = 0; i < ESP_PARTITION_TABLE_MAX_ENTRIES; ++i)
     {
@@ -338,16 +474,28 @@ static void write_partition_table(odroid_partition_t* parts, size_t parts_count)
 
         if (part->magic == ESP_PARTITION_MAGIC)
         {
-            if (part->type == PART_TYPE_APP &&
-                part->subtype == PART_SUBTYPE_FACTORY)
+            partition_count++;
+
+            if (part->type == PART_TYPE_DATA &&
+                part->subtype == PART_SUBTYPE_FACTORY_DATA)
             {
                 startTableEntry = i + 1;
-                startFlashAddress = part->pos.offset + part->pos.size;
                 break;
             }
         }
     }
+}
 
+
+static void write_partition_table(odroid_partition_t* parts, size_t parts_count, size_t flashOffset)
+{
+    esp_err_t err;
+
+    if (!partition_data) {
+        read_partition_table();
+    }
+
+    // Find end of first partitioned
     if (startTableEntry < 0)
     {
         DisplayError("NO FACTORY PARTITION ERROR");
@@ -355,7 +503,7 @@ static void write_partition_table(odroid_partition_t* parts, size_t parts_count)
     }
 
     printf("%s: startTableEntry=%d, startFlashAddress=%#08x\n",
-        __func__, startTableEntry, startFlashAddress);
+        __func__, startTableEntry, flashOffset);
 
     // blank partition table entries
     for (int i = startTableEntry; i < ESP_PARTITION_TABLE_MAX_ENTRIES; ++i)
@@ -371,7 +519,7 @@ static void write_partition_table(odroid_partition_t* parts, size_t parts_count)
         part->magic = ESP_PARTITION_MAGIC;
         part->type = parts[i].type;
         part->subtype = parts[i].subtype;
-        part->pos.offset = startFlashAddress + offset;
+        part->pos.offset = flashOffset + offset;
         part->pos.size = parts[i].length;
         for (int j = 0; j < 16; ++j)
         {
@@ -406,11 +554,12 @@ static void write_partition_table(odroid_partition_t* parts, size_t parts_count)
         indicate_error();
     }
 
-    //esp_partition_reload_table();
+#ifdef USE_PATCHED_ESP_IDF
+    esp_partition_reload_table();
+#endif
 }
 
 
-static void ui_draw_title();
 
 //uint8_t tileData[TILE_LENGTH];
 
@@ -420,9 +569,11 @@ void flash_firmware(const char* fullPath)
 
     printf("%s: HEAP=%#010x\n", __func__, esp_get_free_heap_size());
 
-    ui_draw_title();
-    ui_update_display();
+    ui_draw_title("Install Application");
+    UpdateDisplay();
 
+    read_partition_table();
+    read_app_table();
 
     printf("Opening file '%s'.\n", fullPath);
 
@@ -496,7 +647,7 @@ void flash_firmware(const char* fullPath)
     ui_draw_image(tileLeft, tileTop,
         TILE_WIDTH, TILE_HEIGHT, tileData);
 
-    free(tileData);
+    //free(tileData);
 
     // Tile border
     UG_DrawFrame(tileLeft - 1, tileTop - 1, tileLeft + TILE_WIDTH, tileTop + TILE_HEIGHT, C_BLACK);
@@ -506,25 +657,16 @@ void flash_firmware(const char* fullPath)
     DisplayMessage("[START]");
     DisplayFooter("[B] Cancel");
     //UpdateDisplay();
+    
+    while (1) {
+        int btn = wait_for_button_press(-1);
 
-    odroid_gamepad_state previousState;
-    input_read(&previousState);
-    while (true)
-    {
-        odroid_gamepad_state state;
-        input_read(&state);
-
-        if(!previousState.values[ODROID_INPUT_START] && state.values[ODROID_INPUT_START])
-        {
-            break;
-        }
-        else if(!previousState.values[ODROID_INPUT_B] && state.values[ODROID_INPUT_B])
+        if (btn == ODROID_INPUT_START) break;
+        if (btn == ODROID_INPUT_B)
         {
             fclose(file);
             return;
         }
-
-        vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 
     DisplayMessage("");
@@ -594,23 +736,6 @@ void flash_firmware(const char* fullPath)
 
     //while(1) vTaskDelay(1);
 
-
-    // Determine start address from end of 'factory' partition
-    const esp_partition_t* factory_part = esp_partition_find_first(ESP_PARTITION_TYPE_APP,
-            ESP_PARTITION_SUBTYPE_APP_FACTORY, NULL);
-    if (factory_part == NULL)
-    {
-         printf("esp_partition_find_first failed. (FACTORY)\n");
-
-         DisplayError("FACTORY PARTITION ERROR");
-         indicate_error();
-    }
-
-    const size_t FLASH_START_ADDRESS = factory_part->address + factory_part->size;
-    printf("%s: FLASH_START_ADDRESS=%#010x\n", __func__, FLASH_START_ADDRESS);
-
-
-    const size_t PARTS_MAX = 20;
     int parts_count = 0;
     odroid_partition_t* parts = malloc(sizeof(odroid_partition_t) * PARTS_MAX);
     if (!parts)
@@ -620,7 +745,7 @@ void flash_firmware(const char* fullPath)
     }
 
     // Copy the firmware
-    size_t curren_flash_address = FLASH_START_ADDRESS;
+    size_t curren_flash_address = startFlashAddress;
 
     while(true)
     {
@@ -884,8 +1009,8 @@ void flash_firmware(const char* fullPath)
         memset(&util_part, 0, sizeof(util_part));
 
 
-        util_part.type = PART_TYPE_APP;
-        util_part.subtype = PART_SUBTYPE_TEST;
+        util_part.type = ESP_PARTITION_TYPE_APP;
+        util_part.subtype = ESP_PARTITION_SUBTYPE_APP_TEST;
 
         strcpy((char*)util_part.label, "utility");
 
@@ -903,22 +1028,45 @@ void flash_firmware(const char* fullPath)
 
 
     // Write partition table
-    write_partition_table(parts, parts_count);
+    write_partition_table(parts, parts_count, startFlashAddress);
 
+    // Write app table
+    odroid_app_t *app = &apps[apps_count++];
+    app->magic = APP_MAGIC;
+    app->startOffset = startFlashAddress;
+    app->endOffset = curren_flash_address - 1;
+    app->parts_count = parts_count;
+    memcpy(&app->description, FirmwareDescription, FIRMWARE_DESCRIPTION_SIZE);
+    memcpy(&app->parts, parts, sizeof(odroid_partition_t) * PARTS_MAX);
+    memcpy(&app->tile, tileData, TILE_LENGTH);
+    write_app_table();
 
+    free(tileData);
     free(data);
-
-    // Close SD card
-    odroid_sdcard_close();
 
     // turn LED off
     gpio_set_level(GPIO_NUM_2, 0);
+
+    DisplayMessage("Ready !");
+    DisplayFooter("[B] Go Back   |   [A] Boot");
+    
+    while (1) {
+        int btn = wait_for_button_press(-1);
+
+        if (btn == ODROID_INPUT_A) break;
+        if (btn == ODROID_INPUT_B) return;
+    }
+    
+    // Close SD card
+    odroid_sdcard_close();
 
     // clear framebuffer
     ili9341_clear(0x0000);
 
     // boot firmware
-    //boot_application();
+#ifdef USE_PATCHED_ESP_IDF
+    boot_application();
+#endif
     set_boot_needed = 1;
     esp_restart();
     
@@ -926,11 +1074,19 @@ void flash_firmware(const char* fullPath)
 }
 
 
-
-static void ui_draw_title()
+static void ui_draw_footer(const char* FOOTER)
 {
-    const char* TITLE = "ODROID-GO";
+    UG_FontSelect(&FONT_8X8);
+    UG_SetForecolor(C_WHITE);
+    UG_SetBackcolor(C_MIDNIGHT_BLUE);
+    UG_FillFrame(0, 239 - 16, 319, 239, C_MIDNIGHT_BLUE);
+    const short footerLeft = (320 / 2) - (strlen(FOOTER) * 9 / 2);
+    UG_SetForecolor(C_DARK_GRAY);
+    UG_PutString(footerLeft, 240 - 4 - 8, FOOTER);
+}
 
+static void ui_draw_title(const char* TITLE)
+{
     UG_FillFrame(0, 0, 319, 239, C_WHITE);
 
     // Header
@@ -942,11 +1098,9 @@ static void ui_draw_title()
     UG_PutString(titleLeft, 4, TITLE);
 
     // Footer
-    UG_FillFrame(0, 239 - 16, 319, 239, C_MIDNIGHT_BLUE);
-    const short footerLeft = (320 / 2) - (strlen(VERSION) * 9 / 2);
-    UG_SetForecolor(C_DARK_GRAY);
-    UG_PutString(footerLeft, 240 - 4 - 8, VERSION);
+    ui_draw_footer(VERSION);
 }
+
 
 static void ui_draw_page(char** files, int fileCount, int currentItem)
 {
@@ -955,7 +1109,10 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
     int page = currentItem / ITEM_COUNT;
     page *= ITEM_COUNT;
 
-    ui_draw_title();
+    ui_draw_title("Select a file");
+
+    sprintf(&tempstring, "Free space: %.2fMB", (double)(0x1000000 - startFlashAddress) / 1024 / 1024);
+    ui_draw_footer(tempstring);
 
     const int innerHeight = 240 - (16 * 2); // 208
     const int itemHeight = innerHeight / ITEM_COUNT; // 52
@@ -969,13 +1126,9 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
 
 
 	if (fileCount < 1)
-	{
-		// const char* text = "(none)";
-        //
-        // uint16_t id = TXB_ID_0 + (ITEM_COUNT / 2);
-        // UG_TextboxSetText(&window1, id, (char*)text);
-
-        ui_update_display();
+	{   
+        DisplayMessage("SD Card Empty");
+        UpdateDisplay();
 	}
 	else
 	{
@@ -1036,7 +1189,7 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
             UG_PutString(textLeft, top + 2 + 2 + 16, displayStrings[line]);
 	    }
 
-        ui_update_display();
+        UpdateDisplay();
 
         for(int i = 0; i < ITEM_COUNT; ++i)
         {
@@ -1076,117 +1229,95 @@ const char* ui_choose_file(const char* path)
     int currentItem = 0;
     ui_draw_page(files, fileCount, currentItem);
 
-    odroid_gamepad_state previousState;
-    input_read(&previousState);
-
     while (true)
     {
-		odroid_gamepad_state state;
-		input_read(&state);
-
         int page = currentItem / ITEM_COUNT;
         page *= ITEM_COUNT;
 
-		if (fileCount > 0)
-		{
-	        if(!previousState.values[ODROID_INPUT_DOWN] && state.values[ODROID_INPUT_DOWN])
-	        {
-	            if (fileCount > 0)
-				{
-					if (currentItem + 1 < fileCount)
-		            {
-		                ++currentItem;
-		                ui_draw_page(files, fileCount, currentItem);
-		            }
-					else
-					{
-						currentItem = 0;
-		                ui_draw_page(files, fileCount, currentItem);
-					}
-				}
-	        }
-	        else if(!previousState.values[ODROID_INPUT_UP] && state.values[ODROID_INPUT_UP])
-	        {
-	            if (fileCount > 0)
-				{
-					if (currentItem > 0)
-		            {
-		                --currentItem;
-		                ui_draw_page(files, fileCount, currentItem);
-		            }
-					else
-					{
-						currentItem = fileCount - 1;
-						ui_draw_page(files, fileCount, currentItem);
-					}
-				}
-	        }
-	        else if(!previousState.values[ODROID_INPUT_RIGHT] && state.values[ODROID_INPUT_RIGHT])
-	        {
-	            if (fileCount > 0)
-				{
-					if (page + ITEM_COUNT < fileCount)
-		            {
-		                currentItem = page + ITEM_COUNT;
-		                ui_draw_page(files, fileCount, currentItem);
-		            }
-					else
-					{
-						currentItem = 0;
-						ui_draw_page(files, fileCount, currentItem);
-					}
-				}
-	        }
-	        else if(!previousState.values[ODROID_INPUT_LEFT] && state.values[ODROID_INPUT_LEFT])
-	        {
-	            if (fileCount > 0)
-				{
-					if (page - ITEM_COUNT >= 0)
-		            {
-		                currentItem = page - ITEM_COUNT;
-		                ui_draw_page(files, fileCount, currentItem);
-		            }
-					else
-					{
-						currentItem = page;
-						while (currentItem + ITEM_COUNT < fileCount)
-						{
-							currentItem += ITEM_COUNT;
-						}
+        int btn = wait_for_button_press(-1);
 
-		                ui_draw_page(files, fileCount, currentItem);
-					}
-				}
-	        }
-	        else if(!previousState.values[ODROID_INPUT_A] && state.values[ODROID_INPUT_A])
-	        {
-	            size_t fullPathLength = strlen(path) + 1 + strlen(files[currentItem]) + 1;
-
-	            char* fullPath = (char*)malloc(fullPathLength);
-	            if (!fullPath) abort();
-
-	            strcpy(fullPath, path);
-	            strcat(fullPath, "/");
-	            strcat(fullPath, files[currentItem]);
-
-	            result = fullPath;
-                break;
-	        }
-            else if (!previousState.values[ODROID_INPUT_MENU] && state.values[ODROID_INPUT_MENU])
+        if(btn == ODROID_INPUT_DOWN)
+        {
+            if (currentItem + 1 < fileCount)
             {
-                ui_draw_title();
-                DisplayMessage("Exiting ...");
-                UpdateDisplay();
-
-                boot_application();
-
-                // should not reach
-                abort();
+                ++currentItem;
             }
-		}
+            else
+            {
+                currentItem = 0;
+            }
+            ui_draw_page(files, fileCount, currentItem);
+        }
+        else if(btn == ODROID_INPUT_UP)
+        {
+            if (currentItem > 0)
+            {
+                --currentItem;
+            }
+            else
+            {
+                currentItem = fileCount - 1;
+            }
+            ui_draw_page(files, fileCount, currentItem);
+        }
+        else if(btn == ODROID_INPUT_RIGHT)
+        {
+            if (page + ITEM_COUNT < fileCount)
+            {
+                currentItem = page + ITEM_COUNT;
+            }
+            else
+            {
+                currentItem = 0;
+            }
+            ui_draw_page(files, fileCount, currentItem);
+        }
+        else if(btn == ODROID_INPUT_LEFT)
+        {
+            if (page - ITEM_COUNT >= 0)
+            {
+                currentItem = page - ITEM_COUNT;
+            }
+            else
+            {
+                currentItem = page;
+                while (currentItem + ITEM_COUNT < fileCount)
+                {
+                    currentItem += ITEM_COUNT;
+                }
 
-        previousState = state;
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+            }
+            ui_draw_page(files, fileCount, currentItem);
+        }
+        else if(btn == ODROID_INPUT_A)
+        {
+            size_t fullPathLength = strlen(path) + 1 + strlen(files[currentItem]) + 1;
+
+            char* fullPath = (char*)malloc(fullPathLength);
+            if (!fullPath) abort();
+
+            strcpy(fullPath, path);
+            strcat(fullPath, "/");
+            strcat(fullPath, files[currentItem]);
+
+            result = fullPath;
+            break;
+        }
+        else if (btn == ODROID_INPUT_MENU)
+        {
+            ui_draw_title("ODROID-GO");
+            DisplayMessage("Exiting ...");
+            UpdateDisplay();
+
+            boot_application();
+
+            // should not reach
+            abort();
+        }
+        else if (btn == ODROID_INPUT_B)
+        {
+            break;
+        }
     }
 
     odroid_sdcard_files_free(files, fileCount);
@@ -1194,46 +1325,287 @@ const char* ui_choose_file(const char* path)
     return result;
 }
 
-static void menu_main()
+
+
+static void ui_draw_dialog(char options[], int optionCount, int currentItem)
 {
-    sprintf(tempstring,"Ver: %s-%s", COMPILEDATE, GITREV);
+    int border = 3;
+    int itemWidth = 190;
+    int itemHeight = 20;
+    int width = itemWidth + (border * 2);
+    int height = (optionCount * itemHeight) + (border *  2);
+    int top = (240 - height) / 2;
+    int left  = (320 - width) / 2;
 
-    ui_draw_title();
+    UG_FillFrame(left, top, left + width, top + height, C_BLUE);
+    UG_FillFrame(left + border, top + border, left + width - border, top + height - border, C_WHITE);
+    
+    top += border;
+    left += border;
+    
+    for (int i = 0; i < optionCount; i++) {
+        int fg = (i == currentItem) ? C_WHITE : C_BLACK;
+        int bg = (i == currentItem) ? C_BLUE : C_WHITE;
 
-    // Check SD card
-    esp_err_t ret = odroid_sdcard_open(SD_CARD);
-    if (ret != ESP_OK)
-    {
-        DisplayError("SD CARD ERROR");
-        indicate_error();
+        UG_SetForecolor(fg);
+        UG_SetBackcolor(bg);
+        UG_FillFrame(left, top, left + itemWidth, top + itemHeight, bg);
+        UG_FontSelect(&FONT_8X12);
+        UG_PutString(left + 2, top + 2, &options[i * 32]);
+
+        top += itemHeight;
     }
 
+    UpdateDisplay();
+}
 
-    // Check for /odroid/firmware
 
-    while(1)
+static int ui_choose_dialog(char options[], int optionCount, bool cancellable)
+{
+    int currentItem = 0;
+    ui_draw_dialog(options, optionCount, currentItem);
+
+    while (true)
     {
-        const char* fileName = ui_choose_file(path);
-        if (!fileName) abort();
+		int btn = wait_for_button_press(-1);
 
-        printf("%s: fileName='%s'\n", __func__, fileName);
+        if(btn == ODROID_INPUT_DOWN)
+        {
+            if (currentItem + 1 < optionCount) ++currentItem;
+            else currentItem = 0;
 
-        flash_firmware(fileName);
+            ui_draw_dialog(options, optionCount, currentItem);
+        }
+        else if(btn == ODROID_INPUT_UP)
+        {
+            if (currentItem > 0) --currentItem;
+            else currentItem = optionCount - 1;
 
-        free(fileName);
+            ui_draw_dialog(options, optionCount, currentItem);
+        }
+        else if(btn == ODROID_INPUT_A)
+        {
+            return currentItem;
+        }
+        else if(btn == ODROID_INPUT_B)
+        {
+            if (cancellable) {
+                return -1;
+            }
+        }
     }
+    
+    return currentItem;
+}
 
-    indicate_error();
+
+static void ui_draw_app_page(int currentItem)
+{
+    printf("%s: HEAP=%#010x\n", __func__, esp_get_free_heap_size());
+
+    int page = currentItem / ITEM_COUNT;
+    page *= ITEM_COUNT;
+
+    ui_draw_title("ODROID-GO");
+
+    const int innerHeight = 240 - (16 * 2); // 208
+    const int itemHeight = innerHeight / ITEM_COUNT; // 52
+
+    const int rightWidth = (213); // 320 * (2.0 / 3.0)
+    const int leftWidth = 320 - rightWidth;
+
+    // Tile width = 86, height = 48 (16:9)
+    const short imageLeft = (leftWidth / 2) - (86 / 2);
+    const short textLeft = 320 - rightWidth;
+
+	if (apps_count < 1)
+	{
+        DisplayMessage("No apps have been flashed yet!");
+	}
+	else
+	{
+	    for (int line = 0; line < ITEM_COUNT; ++line)
+	    {
+            
+			if (page + line >= apps_count) break;
+
+            odroid_app_t *app = &apps[page + line];
+            
+            short top = 16 + (line * itemHeight) - 1;
+
+	        if ((page) + line == currentItem)
+	        {
+                UG_SetForecolor(C_BLACK);
+                UG_SetBackcolor(C_YELLOW);
+                UG_FillFrame(0, top + 2, 319, top + itemHeight - 1 - 1, C_YELLOW);
+	        }
+	        else
+	        {
+                UG_SetForecolor(C_BLACK);
+                UG_SetBackcolor(C_WHITE);
+                UG_FillFrame(0, top + 2, 319, top + itemHeight - 1 - 1, C_WHITE);
+	        }
+
+            ui_draw_image(imageLeft, top + 2, TILE_WIDTH, TILE_HEIGHT, app->tile);
+
+            UG_FontSelect(&FONT_8X12);
+            UG_PutString(textLeft, top + 2 + 2 + 6, app->description);
+            sprintf(&tempstring, "0x%x - 0x%x", app->startOffset, app->endOffset);
+            UG_PutString(textLeft, top + 2 + 2 + 24, tempstring);
+	    }
+	}
+
+    UpdateDisplay();
+}
+
+
+void ui_choose_app()
+{
+    printf("%s: HEAP=%#010x\n", __func__, esp_get_free_heap_size());
+
+    // Selection
+    int currentItem = 0;
+    ui_draw_app_page(currentItem);
+
+    int change_footer = xTaskGetTickCount();
+    bool version_footer = true;
+
+    while (true)
+    {
+        int btn = wait_for_button_press(100);
+
+        int page = currentItem / ITEM_COUNT;
+        page *= ITEM_COUNT;
+
+		if (apps_count > 0)
+		{
+	        if(btn == ODROID_INPUT_DOWN)
+	        {
+                if (currentItem + 1 < apps_count)
+                {
+                    ++currentItem;
+                }
+                else
+                {
+                    currentItem = 0;
+                }
+                ui_draw_app_page(currentItem);
+	        }
+	        else if(btn == ODROID_INPUT_UP)
+	        {
+                if (currentItem > 0)
+                {
+                    --currentItem;
+                }
+                else
+                {
+                    currentItem = apps_count - 1;
+                }
+                ui_draw_app_page(currentItem);
+	        }
+	        else if(btn == ODROID_INPUT_RIGHT)
+	        {
+                if (page + ITEM_COUNT < apps_count)
+                {
+                    currentItem = page + ITEM_COUNT;
+                }
+                else
+                {
+                    currentItem = 0;
+                }
+                ui_draw_app_page(currentItem);
+	        }
+	        else if(btn == ODROID_INPUT_LEFT)
+	        {
+                if (page - ITEM_COUNT >= 0)
+                {
+                    currentItem = page - ITEM_COUNT;
+                }
+                else
+                {
+                    currentItem = page;
+                    while (currentItem + ITEM_COUNT < apps_count)
+                    {
+                        currentItem += ITEM_COUNT;
+                    }
+                }
+                ui_draw_app_page(currentItem);
+	        }
+	        else if(btn == ODROID_INPUT_A)
+	        {
+                odroid_app_t *app = &apps[currentItem];
+                write_partition_table(app->parts, app->parts_count, app->startOffset);
+                #ifdef USE_PATCHED_ESP_IDF
+                    boot_application();
+                #endif
+                set_boot_needed = 1;
+                esp_restart();
+                break;
+	        }
+        }
+
+        if (btn == ODROID_INPUT_START)
+        {
+            const char options[5][32] = {
+                "Install from SD Card", 
+                "Erase selected app",
+                "Erase all apps",
+                "Erase NVM",
+                "Restart System"
+            };
+            
+            int choice = ui_choose_dialog(options, 5, true);
+            char* fileName;
+
+            switch(choice) {
+                case 0:
+                    fileName = ui_choose_file(path);
+                    if (fileName) {
+                        printf("%s: fileName='%s'\n", __func__, fileName);
+                        flash_firmware(fileName);
+                        free(fileName);
+                    }
+                    break;
+                case 1:
+                    remove_app(currentItem);
+                    break;
+                case 2:
+                    memset(apps, 0xFF, apps_max * sizeof(odroid_app_t));
+                    write_app_table();
+                    read_app_table();
+                    break;
+                case 3:
+                    nvs_flash_erase();
+                    break;
+            }
+
+            ui_draw_app_page(currentItem);
+        }
+
+        if (xTaskGetTickCount() - change_footer > 500) {
+            change_footer = xTaskGetTickCount();
+            version_footer = !version_footer;
+            
+            if (!version_footer) {
+                ui_draw_footer("[START] Menu    |    [A] Boot App");
+            } else {
+                ui_draw_footer(VERSION);
+            }
+            UpdateDisplay();
+        }
+    }
 }
 
 
 void app_main(void)
 {
+    #ifndef USE_PATCHED_ESP_IDF
     if (set_boot_needed == 1) {
         set_boot_needed = 0;
         boot_application();
     }
-    
+    #endif
+
     const char* VER_PREFIX = "Ver: ";
     size_t ver_size = strlen(VER_PREFIX) + strlen(COMPILEDATE) + 1 + strlen(GITREV) + 1;
     VERSION = malloc(ver_size);
@@ -1262,13 +1634,10 @@ void app_main(void)
 
     UG_Init(&gui, pset, 320, 240);
 
-    menu_main();
+    read_partition_table();
+    read_app_table();
 
-
-    while(1)
-    {
-        vTaskDelay(1);
-    }
+    ui_choose_app();
 
     indicate_error();
 }

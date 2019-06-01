@@ -79,6 +79,42 @@ void input_read(odroid_gamepad_state* out_state)
     xSemaphoreGive(xSemaphore);
 }
 
+uint16_t wait_for_button_press(int ticks)
+{
+    odroid_gamepad_state previousState;
+    input_read(&previousState);
+
+    int timeout = xTaskGetTickCount() + ticks;
+    //uint16_t btns = 0;
+
+    while (true)
+    {
+		odroid_gamepad_state state;
+		input_read(&state);
+
+        for(int i = 0; i < ODROID_INPUT_MAX; i++)
+        {
+            if (!previousState.values[i] && state.values[i]) {
+                //btns |= (1 << i);
+                return i;
+            }
+        }
+
+        //if (btns != 0) { we don't need multiple detection right now
+        //    return btns;
+        //}
+
+        if (ticks > 0 && timeout < xTaskGetTickCount()) {
+            break;
+        }
+        
+        previousState = state;
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+
+    return -1;
+}
+
 static void input_task(void *arg)
 {
     input_task_is_running = true;
