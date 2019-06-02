@@ -36,6 +36,17 @@
 
 #define APP_MAGIC 0x1205
 
+#ifndef COMPILEDATE
+#define COMPILEDATE "none"
+#endif
+
+#ifndef GITREV
+#define GITREV "none"
+#endif
+
+#define VERSION COMPILEDATE "-" GITREV
+
+
 static RTC_NOINIT_ATTR int set_boot_needed = 0;
 
 const char* SD_CARD = "/sd";
@@ -94,7 +105,6 @@ char tempstring[512];
 char** files;
 int fileCount;
 const char* path = "/sd/odroid/firmware";
-char* VERSION = NULL;
 
 esp_err_t sdcardret;
 
@@ -1199,9 +1209,9 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
 
 const char* ui_choose_file(const char* path)
 {
-    const char* result = NULL;
-
     printf("%s: HEAP=%#010x\n", __func__, esp_get_free_heap_size());
+
+    const char* result = NULL;
 
     files = 0;
     fileCount = odroid_sdcard_files_get(path, ".fw", &files);
@@ -1326,6 +1336,8 @@ const char* ui_choose_file(const char* path)
 
 static void ui_draw_dialog(char options[], int optionCount, int currentItem)
 {
+    printf("%s: HEAP=%#010x\n", __func__, esp_get_free_heap_size());
+
     int border = 3;
     int itemWidth = 190;
     int itemHeight = 20;
@@ -1357,7 +1369,7 @@ static void ui_draw_dialog(char options[], int optionCount, int currentItem)
     UG_SetForecolor(C_GRAY);
     UG_SetBackcolor(C_WHITE);
     UG_FontSelect(&FONT_8X8);
-    UG_PutString(left + 2, top + 2, "Version:\n " COMPILEDATE "-" GITREV);
+    UG_PutString(left + 2, top + 2, "Version:\n " VERSION);
 
     UpdateDisplay();
 }
@@ -1365,6 +1377,8 @@ static void ui_draw_dialog(char options[], int optionCount, int currentItem)
 
 static int ui_choose_dialog(char options[], int optionCount, bool cancellable)
 {
+    printf("%s: HEAP=%#010x\n", __func__, esp_get_free_heap_size());
+
     int currentItem = 0;
     ui_draw_dialog(options, optionCount, currentItem);
 
@@ -1598,22 +1612,11 @@ void app_main(void)
     }
     #endif
 
-    const char* VER_PREFIX = "Ver: ";
-    size_t ver_size = strlen(VER_PREFIX) + strlen(COMPILEDATE) + 1 + strlen(GITREV) + 1;
-    VERSION = malloc(ver_size);
-    if (!VERSION) abort();
-
-    strcpy(VERSION, VER_PREFIX);
-    strcat(VERSION, COMPILEDATE);
-    strcat(VERSION, "-");
-    strcat(VERSION, GITREV);
-
-    printf("odroid-go-firmware (%s). HEAP=%#010x\n", VERSION, esp_get_free_heap_size());
+    printf("odroid-go-firmware (Ver: %s). HEAP=%#010x\n", VERSION, esp_get_free_heap_size());
 
     nvs_flash_init();
 
     input_init();
-
 
     // turn LED on
     gpio_set_direction(GPIO_NUM_2, GPIO_MODE_OUTPUT);
