@@ -279,6 +279,22 @@ static void DisplayHeader(const char* message)
 
 
 //---------------
+void cleanup_and_restart()
+{
+    // Turn off LED pin
+    gpio_set_level(GPIO_NUM_2, 0);
+
+    // clear and deinit display
+    ili9341_clear(0x0000);
+    ili9341_deinit();
+    
+    // Close SD card
+    odroid_sdcard_close();
+
+    esp_restart();
+}
+
+
 void boot_application()
 {
     printf("Booting application.\n");
@@ -299,13 +315,7 @@ void boot_application()
         indicate_error();
     }
     
-    // clear framebuffer
-    ili9341_clear(0x0000);
-
-    backlight_deinit();
-    
-    // reboot
-    esp_restart();
+    cleanup_and_restart();
 }
 
 
@@ -1057,21 +1067,14 @@ void flash_firmware(const char* fullPath)
         if (btn == ODROID_INPUT_A) break;
         if (btn == ODROID_INPUT_B) return;
     }
-    
-    // Close SD card
-    odroid_sdcard_close();
-
-    // clear framebuffer
-    ili9341_clear(0x0000);
 
     // boot firmware
 #ifdef USE_PATCHED_ESP_IDF
     boot_application();
-#endif
+#else
     set_boot_needed = 1;
-    esp_restart();
-    
-    indicate_error();
+    cleanup_and_restart();
+#endif
 }
 
 
@@ -1534,9 +1537,10 @@ void ui_choose_app()
                 write_partition_table(app->parts, app->parts_count, app->startOffset);
                 #ifdef USE_PATCHED_ESP_IDF
                     boot_application();
+                #else
+                    set_boot_needed = 1;
+                    cleanup_and_restart();
                 #endif
-                set_boot_needed = 1;
-                esp_restart();
                 break;
 	        }
         }
@@ -1573,6 +1577,9 @@ void ui_choose_app()
                     break;
                 case 3:
                     nvs_flash_erase();
+                    break;
+                case 4:
+                    cleanup_and_restart();
                     break;
             }
 

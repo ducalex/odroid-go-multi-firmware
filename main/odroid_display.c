@@ -425,6 +425,14 @@ void ili9341_write_frame_rectangleLE(short left, short top, short width, short h
     }
 }
 
+void ili9341_deinit()
+{
+    spi_bus_remove_device(spi);
+    backlight_deinit();
+    gpio_reset_pin(LCD_PIN_NUM_DC);
+    gpio_reset_pin(LCD_PIN_NUM_BCKL);
+}
+
 void ili9341_init()
 {
 	// Initialize transactions
