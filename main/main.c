@@ -578,13 +578,13 @@ void flash_firmware(const char* fullPath)
 
     printf("%s: HEAP=%#010x\n", __func__, esp_get_free_heap_size());
 
+    read_partition_table();
+    read_app_table();
+    
     sprintf(&tempstring, "Size: N/A   Destination: 0x%x", startFlashAddress);
 
     ui_draw_title("Install Application", tempstring);
     UpdateDisplay();
-
-    read_partition_table();
-    read_app_table();
 
     printf("Opening file '%s'.\n", fullPath);
 
