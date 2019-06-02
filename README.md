@@ -32,23 +32,23 @@ To access the boot menu you then hold **A** while booting.
 
 
 # Questions
-```
-Q: Why is erase very slow sometimes?
-A: To avoid fragmenting the flash memory we shift all apps to fill the new empty space, which can be very long in some instances. In the future I might make defrag to be on demand or only when running out of space.
-```
-```
-Q: How does it work?
-A: When you select an application to boot, the ESP32's partition table is rewritten to make it seem like the app is the only thing there.
-This firmware keeps track of what is installed and where. The app will then boot every time you power up the system, until you change it.
-```
-```
-Q: Why rewrite the partition table when booting an application, why not keep all partitions of all apps?
-A: It causes conflicts with subtypes. Renumbering them mostly worked with single-partition applications. Multi-partition applications (like Go-Play) however mostly did not work because they (rightfully) expect the types they declared when packaging.
-```
-```
-Q: How can I get the boot menu without holding a button for 2 seconds?
-A: Unfortunately, I haven't found a reliable way of doing that yet
-```
+
+>  **Q: Why is erase very slow sometimes?**
+> 
+> A: To avoid fragmenting the flash memory we shift all apps to fill the new empty space, which can be very long in some instances. Eventually I hope to improve the process and make defrag run on demand or only when running out of space.
+
+> **Q: How does it work?**
+> 
+> A: When you select an application to boot, the ESP32's partition table is rewritten to make it seem like the app is the only thing there. This firmware keeps track of what is installed and where. The app will then boot every time you power up the system, until you change it.
+
+> **Q: Why rewrite the partition table when booting an application, why not keep all partitions of all apps?**
+> 
+> A: I tried. It causes conflicts with subtypes. Renumbering them mostly worked with single-partition applications. Multi-partition applications (like Go-Play) however mostly did not work because they (understandably) expect the types they declared when packaging.
+
+> **Q: How can I get the boot menu without holding a button for 2 seconds?**
+> 
+> A: Unfortunately, I haven't found a reliable way of doing that yet
+
 
 # Compilation
 You can compile with the standard esp-idf with one caveat and it affects only the .fw installation method:
