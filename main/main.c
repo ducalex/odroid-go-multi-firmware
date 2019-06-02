@@ -86,6 +86,20 @@ typedef struct
     uint8_t _reserved[256];
 } odroid_app_t;
 
+typedef struct
+{
+    char header[24];
+    char description[40];
+    uint8_t tile [TILE_LENGTH];
+} odroid_fw_header_t;
+
+typedef struct
+{
+    odroid_fw_header_t fileHeader;
+    odroid_partition_t parts[PARTS_MAX];
+    uint8_t parts_count;
+    size_t totalLength;
+} odroid_fw_t;
 // ------
 
 static odroid_app_t* apps;
@@ -142,67 +156,6 @@ static void ui_draw_image(short x, short y, short width, short height, uint16_t*
             UG_DrawPixel(x + j, y + i, pixel);
         }
     }
-}
-
-// TODO: default bad image tile
-void ui_firmware_image_get(const char* filename, uint16_t* outData)
-{
-    //printf("%s: filename='%s'\n", __func__, filename);
-    const uint8_t DEFAULT_DATA = 0xff;
-
-    FILE* file = fopen(filename, "rb");
-    if (!file)
-    {
-        memset(outData, DEFAULT_DATA, TILE_LENGTH);
-        return;
-    }
-
-    // Check the header
-    const size_t headerLength = strlen(HEADER_V00_01);
-    char* header = malloc(headerLength + 1);
-    if(!header)
-    {
-        memset(outData, DEFAULT_DATA, TILE_LENGTH);
-        goto ui_firmware_image_get_exit;
-    }
-
-    // null terminate
-    memset(header, 0, headerLength + 1);
-
-    size_t count = fread(header, 1, headerLength, file);
-    if (count != headerLength)
-    {
-        memset(outData, DEFAULT_DATA, TILE_LENGTH);
-        goto ui_firmware_image_get_exit;
-    }
-
-    if (strncmp(HEADER_V00_01, header, headerLength) != 0)
-    {
-        memset(outData, DEFAULT_DATA, TILE_LENGTH);
-        goto ui_firmware_image_get_exit;
-    }
-
-    //printf("Header OK: '%s'\n", header);
-
-    // read description
-    count = fread(FirmwareDescription, 1, FIRMWARE_DESCRIPTION_SIZE, file);
-    if (count != FIRMWARE_DESCRIPTION_SIZE)
-    {
-        memset(outData, DEFAULT_DATA, TILE_LENGTH);
-        goto ui_firmware_image_get_exit;
-    }
-
-    // read tile
-    count = fread(outData, 1, TILE_LENGTH, file);
-    if (count != TILE_LENGTH)
-    {
-        memset(outData, DEFAULT_DATA, TILE_LENGTH);
-    }
-
-
-ui_firmware_image_get_exit:
-    free(header);
-    fclose(file);
 }
 
 static void ClearScreen()
@@ -580,13 +533,65 @@ static void write_partition_table(odroid_partition_t* parts, size_t parts_count,
 
 
 
+bool firmware_get_info(const char* filename, odroid_fw_t* outData)
+{
+    size_t count, file_size, length;
+
+    FILE* file = fopen(filename, "rb");
+    if (!file)
+    {
+        return false;
+    }
+    
+    fseek(file, 0, SEEK_END);
+    file_size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    count = fread(outData, 1, sizeof(outData->fileHeader), file);
+    if (count != sizeof(outData->fileHeader))
+    {
+        fclose(file);
+        return false;
+    }
+    
+    if (memcmp(HEADER_V00_01, outData->fileHeader.header, strlen(HEADER_V00_01)) != 0)
+    {
+        fclose(file);
+        return false;
+    }
+
+    outData->parts_count = 0;
+    outData->totalLength = 0;
+
+    while (ftell(file) < (file_size - 4))
+    {
+        // Partition
+        odroid_partition_t *part = &outData->parts[outData->parts_count];
+        count = fread(part, 1, sizeof(odroid_partition_t), file);
+        if (count != sizeof(odroid_partition_t)) break;
+        
+        outData->totalLength += part->length;
+        outData->parts_count++;
+
+        // Data Length
+        count = fread(&length, 1, sizeof(length), file);
+        if (count != sizeof(length)) break;
+    
+        fseek(file, ftell(file) + length, SEEK_SET);
+    }
+    
+    fclose(file);
+    return true;
+}
+
+
 void flash_utility()
 {
     // Code to flash utility.bin. 
     // Because leaving it in flash_firmware results in multiple copies being flashed.
+    FILE* util = fopen("/sd/odroid/utility.bin", "rb");
     //util_part.type = ESP_PARTITION_TYPE_APP;
     //util_part.subtype = ESP_PARTITION_SUBTYPE_APP_TEST;
-
 }
 
 
@@ -1038,14 +1043,8 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
 	}
 	else
 	{
-        uint16_t* tile = malloc(TILE_LENGTH);
-        if (!tile) abort();
-
-        char* displayStrings[ITEM_COUNT];
-        for(int i = 0; i < ITEM_COUNT; ++i)
-        {
-            displayStrings[i] = NULL;
-        }
+        odroid_fw_t *fw = malloc(sizeof(odroid_fw_t));
+        if (!fw) abort();
 
 	    for (int line = 0; line < ITEM_COUNT; ++line)
 	    {
@@ -1070,39 +1069,34 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
 			char* fileName = files[page + line];
 			if (!fileName) abort();
 
-			displayStrings[line] = (char*)malloc(strlen(fileName) + 1);
-            strcpy(displayStrings[line], fileName);
-            displayStrings[line][strlen(fileName) - 3] = 0; // ".fw" = 3
+            sprintf(&tempstring, "%s/%s", path, fileName);
+            bool valid = firmware_get_info(tempstring, fw);
 
-
-            size_t fullPathLength = strlen(path) + 1 + strlen(fileName) + 1;
-            char* fullPath = (char*)malloc(fullPathLength);
-            if (!fullPath) abort();
-
-            strcpy(fullPath, path);
-            strcat(fullPath, "/");
-            strcat(fullPath, fileName);
-            ui_firmware_image_get(fullPath, tile);
-            ui_draw_image(imageLeft, top + 2, TILE_WIDTH, TILE_HEIGHT, tile);
-
-            free(fullPath);
+            ui_draw_image(imageLeft, top + 2, TILE_WIDTH, TILE_HEIGHT, fw->fileHeader.tile);
 
             // Tile border
             //UG_DrawFrame(imageLeft - 1, top + 1, imageLeft + TILE_WIDTH, top + 2 + TILE_HEIGHT, C_BLACK);
 
 	        //UG_TextboxSetText(&window1, id, displayStrings[line]);
             UG_FontSelect(&FONT_8X12);
-            UG_PutString(textLeft, top + 2 + 2 + 16, displayStrings[line]);
+            strcpy(tempstring, fileName);
+            tempstring[strlen(fileName) - 3] = 0; // ".fw" = 3
+            UG_PutString(textLeft, top + 2 + 2 + 7, tempstring);
+
+            if (valid) {
+                UG_SetForecolor(C_GRAY);
+                sprintf(&tempstring, "%.2f MB", (float)fw->totalLength / 1024 / 1024);
+            } else {
+                UG_SetForecolor(C_RED);
+                sprintf(&tempstring, "Invalid firmware");
+            }
+            
+            UG_PutString(textLeft, top + 2 + 2 + 23, tempstring);
 	    }
 
         UpdateDisplay();
 
-        for(int i = 0; i < ITEM_COUNT; ++i)
-        {
-            free(displayStrings[i]);
-        }
-
-        free(tile);
+        free(fw);
 	}
 }
 
@@ -1365,9 +1359,11 @@ static void ui_draw_app_page(int currentItem)
             ui_draw_image(imageLeft, top + 2, TILE_WIDTH, TILE_HEIGHT, app->tile);
 
             UG_FontSelect(&FONT_8X12);
-            UG_PutString(textLeft, top + 2 + 2 + 6, app->description);
+            UG_PutString(textLeft, top + 2 + 2 + 7, app->description);
+            //sprintf(&tempstring, "%.2f MB @ 0x%x", (float)(app->endOffset - app->startOffset) / 1024 / 1024, app->startOffset);
+            UG_SetForecolor(C_GRAY);
             sprintf(&tempstring, "0x%x - 0x%x", app->startOffset, app->endOffset);
-            UG_PutString(textLeft, top + 2 + 2 + 24, tempstring);
+            UG_PutString(textLeft, top + 2 + 2 + 23, tempstring);
 	    }
 	}
 
