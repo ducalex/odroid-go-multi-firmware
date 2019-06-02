@@ -372,7 +372,7 @@ static void read_app_table()
         apps_count++;
     }
 
-    //64K align the address, the flashing code below complains otherwise. will investigate later.
+    //64K align the address (https://docs.espressif.com/projects/esp-idf/en/latest/api-guides/partition-tables.html#offset-size)
     if ((startFlashAddress & 0xffff) != 0) {
         startFlashAddress = (startFlashAddress & 0xffff0000) + 0xffff + 1;
     }
