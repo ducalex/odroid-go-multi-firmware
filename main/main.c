@@ -99,8 +99,7 @@ char* VERSION = NULL;
 esp_err_t sdcardret;
 
 
-static void ui_draw_title(const char*);
-static void ui_draw_footer(const char*);
+static void ui_draw_title(const char*, const char*);
 
 
 void indicate_error()
@@ -569,7 +568,9 @@ void flash_firmware(const char* fullPath)
 
     printf("%s: HEAP=%#010x\n", __func__, esp_get_free_heap_size());
 
-    ui_draw_title("Install Application");
+    sprintf(&tempstring, "Size: N/A   Destination: 0x%x", startFlashAddress);
+
+    ui_draw_title("Install Application", tempstring);
     UpdateDisplay();
 
     read_partition_table();
@@ -1074,18 +1075,7 @@ void flash_firmware(const char* fullPath)
 }
 
 
-static void ui_draw_footer(const char* FOOTER)
-{
-    UG_FontSelect(&FONT_8X8);
-    UG_SetForecolor(C_WHITE);
-    UG_SetBackcolor(C_MIDNIGHT_BLUE);
-    UG_FillFrame(0, 239 - 16, 319, 239, C_MIDNIGHT_BLUE);
-    const short footerLeft = (320 / 2) - (strlen(FOOTER) * 9 / 2);
-    UG_SetForecolor(C_DARK_GRAY);
-    UG_PutString(footerLeft, 240 - 4 - 8, FOOTER);
-}
-
-static void ui_draw_title(const char* TITLE)
+static void ui_draw_title(const char* TITLE, const char* FOOTER)
 {
     UG_FillFrame(0, 0, 319, 239, C_WHITE);
 
@@ -1098,7 +1088,12 @@ static void ui_draw_title(const char* TITLE)
     UG_PutString(titleLeft, 4, TITLE);
 
     // Footer
-    ui_draw_footer(VERSION);
+    UG_FontSelect(&FONT_8X8);
+    UG_SetBackcolor(C_MIDNIGHT_BLUE);
+    UG_SetForecolor(C_LIGHT_GRAY);
+    UG_FillFrame(0, 239 - 16, 319, 239, C_MIDNIGHT_BLUE);
+    const short footerLeft = (320 / 2) - (strlen(FOOTER) * 9 / 2);
+    UG_PutString(footerLeft, 240 - 4 - 8, FOOTER);
 }
 
 
@@ -1109,10 +1104,9 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
     int page = currentItem / ITEM_COUNT;
     page *= ITEM_COUNT;
 
-    ui_draw_title("Select a file");
-
     sprintf(&tempstring, "Free space: %.2fMB", (double)(0x1000000 - startFlashAddress) / 1024 / 1024);
-    ui_draw_footer(tempstring);
+    
+    ui_draw_title("Select a file", tempstring);
 
     const int innerHeight = 240 - (16 * 2); // 208
     const int itemHeight = innerHeight / ITEM_COUNT; // 52
@@ -1305,7 +1299,7 @@ const char* ui_choose_file(const char* path)
         }
         else if (btn == ODROID_INPUT_MENU)
         {
-            ui_draw_title("ODROID-GO");
+            ui_draw_title("ODROID-GO", VERSION);
             DisplayMessage("Exiting ...");
             UpdateDisplay();
 
@@ -1333,7 +1327,7 @@ static void ui_draw_dialog(char options[], int optionCount, int currentItem)
     int itemWidth = 190;
     int itemHeight = 20;
     int width = itemWidth + (border * 2);
-    int height = (optionCount * itemHeight) + (border *  2);
+    int height = ((optionCount+1) * itemHeight) + (border *  2);
     int top = (240 - height) / 2;
     int left  = (320 - width) / 2;
 
@@ -1355,6 +1349,12 @@ static void ui_draw_dialog(char options[], int optionCount, int currentItem)
 
         top += itemHeight;
     }
+
+    // Display version at the bottom
+    UG_SetForecolor(C_GRAY);
+    UG_SetBackcolor(C_WHITE);
+    UG_FontSelect(&FONT_8X8);
+    UG_PutString(left + 2, top + 2, "Version:\n " COMPILEDATE "-" GITREV);
 
     UpdateDisplay();
 }
@@ -1406,7 +1406,7 @@ static void ui_draw_app_page(int currentItem)
     int page = currentItem / ITEM_COUNT;
     page *= ITEM_COUNT;
 
-    ui_draw_title("ODROID-GO");
+    ui_draw_title("ODROID-GO", "[START] Menu    |    [A] Boot App");
 
     const int innerHeight = 240 - (16 * 2); // 208
     const int itemHeight = innerHeight / ITEM_COUNT; // 52
@@ -1466,9 +1466,6 @@ void ui_choose_app()
     // Selection
     int currentItem = 0;
     ui_draw_app_page(currentItem);
-
-    int change_footer = xTaskGetTickCount();
-    bool version_footer = true;
 
     while (true)
     {
@@ -1580,18 +1577,6 @@ void ui_choose_app()
             }
 
             ui_draw_app_page(currentItem);
-        }
-
-        if (xTaskGetTickCount() - change_footer > 500) {
-            change_footer = xTaskGetTickCount();
-            version_footer = !version_footer;
-            
-            if (!version_footer) {
-                ui_draw_footer("[START] Menu    |    [A] Boot App");
-            } else {
-                ui_draw_footer(VERSION);
-            }
-            UpdateDisplay();
         }
     }
 }
