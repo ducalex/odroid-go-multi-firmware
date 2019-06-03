@@ -1,3 +1,17 @@
 #!/bin/bash
-release=`date +%Y%m%d`;
-./tools/mkfw/mkfw "Firmware Manager ($release)" tile.raw 0 32 851968 manager build/odroid-go-firmware.bin 1 254 131072 apptable dummy.bin 0 16 100 dummy dummy.bin
+RELEASE=`date +%Y%m%d`;
+BINNAME=odroid-go-firmware
+
+./tools/mkfw/mkfw "Firmware Manager ($RELEASE)" tile.raw \
+    0 32 851968 manager build/$BINNAME.bin \
+    1 254 131072 apptable dummy.bin \
+    0 16 100 dummy dummy.bin
+
+mv firmware.fw "odroid-go-firmware-$RELEASE.fw"
+
+./tools/mkimg/mkimg "odroid-go-firmware-$RELEASE.img" \
+    0x1000 build/bootloader/bootloader.bin \
+    0x8000 build/partitions.bin \
+    0xf000 build/phy_init_data.bin \
+    0x10000 build/$BINNAME.bin \
+    0xE0000 dummy.bin
