@@ -28,8 +28,6 @@
 #define PART_SUBTYPE_FACTORY 0x00
 #define PART_SUBTYPE_FACTORY_DATA 0xFE
 
-#define PARTS_MAX 20
-
 #define TILE_WIDTH (86)
 #define TILE_HEIGHT (48)
 #define TILE_LENGTH (TILE_WIDTH * TILE_HEIGHT * 2)
@@ -49,6 +47,9 @@
 
 #define VERSION COMPILEDATE "-" GITREV
 
+#define FIRMWARE_HEADER_SIZE (24)
+#define FIRMWARE_DESCRIPTION_SIZE (40)
+#define FIRMWARE_PARTS_MAX (20)
 
 static RTC_NOINIT_ATTR int set_boot_needed = 0;
 
@@ -56,8 +57,6 @@ const char* SD_CARD = "/sd";
 //const char* HEADER = "ODROIDGO_FIRMWARE_V00_00";
 const char* HEADER_V00_01 = "ODROIDGO_FIRMWARE_V00_01";
 
-#define FIRMWARE_DESCRIPTION_SIZE (40)
-char FirmwareDescription[FIRMWARE_DESCRIPTION_SIZE];
 
 // <partition type=0x00 subtype=0x00 label='name' flags=0x00000000 length=0x00000000>
 // 	<data length=0x00000000>
@@ -83,7 +82,7 @@ typedef struct
     uint32_t startOffset;
     uint32_t endOffset;
     char description[FIRMWARE_DESCRIPTION_SIZE];
-    odroid_partition_t parts[PARTS_MAX];
+    odroid_partition_t parts[FIRMWARE_PARTS_MAX];
     uint8_t parts_count;
     uint8_t tile[TILE_LENGTH];
     uint8_t _reserved[256];
@@ -91,15 +90,15 @@ typedef struct
 
 typedef struct
 {
-    char header[24];
-    char description[40];
+    char header[FIRMWARE_HEADER_SIZE];
+    char description[FIRMWARE_DESCRIPTION_SIZE];
     uint8_t tile [TILE_LENGTH];
 } odroid_fw_header_t;
 
 typedef struct
 {
     odroid_fw_header_t fileHeader;
-    odroid_partition_t parts[PARTS_MAX];
+    odroid_partition_t parts[FIRMWARE_PARTS_MAX];
     uint8_t parts_count;
     size_t totalLength;
 } odroid_fw_t;
@@ -373,7 +372,7 @@ static void write_app_table()
 static void remove_app(uint8_t index)
 {
     //memset(&apps[index], 0xFF, sizeof(odroid_app_t));
-    
+
     if (index == apps_count -1) { // It's the last one, easy then!
         apps_count--;
     }
@@ -619,8 +618,10 @@ void flash_firmware(const char* fullPath)
     read_partition_table();
     read_app_table();
     
-    sprintf(&tempstring, "Size: N/A   Destination: 0x%x", startFlashAddress);
+    odroid_app_t *app = &apps[apps_count];
+    memset(app, 0x00, sizeof(odroid_app_t));
 
+    sprintf(&tempstring, "Size: N/A   Destination: 0x%x", startFlashAddress);
     ui_draw_title("Install Application", tempstring);
     UpdateDisplay();
 
@@ -634,35 +635,21 @@ void flash_firmware(const char* fullPath)
     }
 
     // Check the header
-    const size_t headerLength = strlen(HEADER_V00_01);
-    char* header = malloc(headerLength + 1);
-    if(!header)
-    {
-        DisplayError("MEMORY ERROR");
-        indicate_error();
-    }
-
-    // null terminate
-    memset(header, 0, headerLength + 1);
-
-    count = fread(header, 1, headerLength, file);
-    if (count != headerLength)
+    count = fread(tempstring, 1, FIRMWARE_HEADER_SIZE, file);
+    if (count != FIRMWARE_HEADER_SIZE)
     {
         DisplayError("HEADER READ ERROR");
         indicate_error();
     }
 
-    if (strncmp(HEADER_V00_01, header, headerLength) != 0)
+    if (memcmp(HEADER_V00_01, tempstring, FIRMWARE_HEADER_SIZE) != 0)
     {
         DisplayError("HEADER MATCH ERROR");
         indicate_error();
     }
 
-    printf("Header OK: '%s'\n", header);
-    free(header);
-
     // read description
-    count = fread(FirmwareDescription, 1, FIRMWARE_DESCRIPTION_SIZE, file);
+    count = fread(&app->description, 1, FIRMWARE_DESCRIPTION_SIZE, file);
     if (count != FIRMWARE_DESCRIPTION_SIZE)
     {
         DisplayError("DESCRIPTION READ ERROR");
@@ -670,21 +657,15 @@ void flash_firmware(const char* fullPath)
     }
 
     // ensure null terminated
-    FirmwareDescription[FIRMWARE_DESCRIPTION_SIZE - 1] = 0;
+    app->description[FIRMWARE_DESCRIPTION_SIZE - 1] = 0;
 
-    printf("FirmwareDescription='%s'\n", FirmwareDescription);
-    DisplayHeader(FirmwareDescription);
+    printf("FirmwareDescription='%s'\n", app->description);
+    DisplayHeader(app->description);
     //UpdateDisplay();
 
     // Tile
-    uint16_t* tileData = malloc(TILE_LENGTH);
-    if (!tileData)
-    {
-        DisplayError("TILE MEMORY ERROR");
-        indicate_error();
-    }
 
-    count = fread(tileData, 1, TILE_LENGTH, file);
+    count = fread(&app->tile, 1, TILE_LENGTH, file);
     if (count != TILE_LENGTH)
     {
         DisplayError("TILE READ ERROR");
@@ -693,10 +674,7 @@ void flash_firmware(const char* fullPath)
 
     const uint16_t tileLeft = (320 / 2) - (TILE_WIDTH / 2);
     const uint16_t tileTop = (16 + 16 + 16);
-    ui_draw_image(tileLeft, tileTop,
-        TILE_WIDTH, TILE_HEIGHT, tileData);
-
-    //free(tileData);
+    ui_draw_image(tileLeft, tileTop, TILE_WIDTH, TILE_HEIGHT, app->tile);
 
     // Tile border
     UG_DrawFrame(tileLeft - 1, tileTop - 1, tileLeft + TILE_WIDTH, tileTop + TILE_HEIGHT, C_BLACK);
@@ -718,12 +696,9 @@ void flash_firmware(const char* fullPath)
         }
     }
 
-    DisplayMessage("");
-    DisplayFooter("");
-    //UpdateDisplay();
-
 
     DisplayMessage("Verifying ...");
+    DisplayFooter("");
 
 
     void* data = malloc(FLASH_BLOCK_SIZE);
@@ -782,15 +757,6 @@ void flash_firmware(const char* fullPath)
     // restore location to end of description
     fseek(file, current_position, SEEK_SET);
 
-    //while(1) vTaskDelay(1);
-
-    int parts_count = 0;
-    odroid_partition_t* parts = malloc(sizeof(odroid_partition_t) * PARTS_MAX);
-    if (!parts)
-    {
-        DisplayError("PARTITION MEMORY ERROR");
-        indicate_error();
-    }
 
     // Copy the firmware
     size_t curren_flash_address = startFlashAddress;
@@ -802,36 +768,31 @@ void flash_firmware(const char* fullPath)
             break;
         }
 
-        // Partition
-        odroid_partition_t slot;
-        count = fread(&slot, 1, sizeof(slot), file);
-        if (count != sizeof(slot))
-        {
-            DisplayError("PARTITION READ ERROR");
-            indicate_error();
-        }
-
-        if (parts_count >= PARTS_MAX)
+        if (app->parts_count >= FIRMWARE_PARTS_MAX)
         {
             DisplayError("PARTITION COUNT ERROR");
             indicate_error();
         }
 
-        if (slot.type == 0xff)
+        // Partition
+        odroid_partition_t *slot = &app->parts[app->parts_count];
+
+        count = fread(slot, 1, sizeof(odroid_partition_t), file);
+        if (count != sizeof(odroid_partition_t))
+        {
+            DisplayError("PARTITION READ ERROR");
+            indicate_error();
+        }
+
+        if (slot->type == 0xff)
         {
             DisplayError("PARTITION TYPE ERROR");
             indicate_error();
         }
-
-        if (curren_flash_address + slot.length > 16 * 1024 * 1024)
+        
+        if (curren_flash_address + slot->length > 16 * 1024 * 1024)
         {
             DisplayError("PARTITION LENGTH ERROR");
-            indicate_error();
-        }
-
-        if ((curren_flash_address & 0xffff0000) != curren_flash_address)
-        {
-            DisplayError("PARTITION LENGTH ALIGNMENT ERROR");
             indicate_error();
         }
 
@@ -845,10 +806,10 @@ void flash_firmware(const char* fullPath)
             indicate_error();
         }
 
-        if (length > slot.length)
+        if (length > slot->length)
         {
-            printf("%s: data length error - length=%x, slot.length=%x\n",
-                __func__, length, slot.length);
+            printf("%s: data length error - length=%x, slot->length=%x\n",
+                __func__, length, slot->length);
 
             DisplayError("DATA LENGTH ERROR");
             indicate_error();
@@ -867,7 +828,7 @@ void flash_firmware(const char* fullPath)
             if (eraseBlocks * ERASE_BLOCK_SIZE < length) ++eraseBlocks;
 
             // Display
-            sprintf(tempstring, "Erasing ... (%d)", parts_count);
+            sprintf(tempstring, "Erasing ... (%d)", app->parts_count);
 
             printf("%s\n", tempstring);
             DisplayProgress(0);
@@ -891,7 +852,7 @@ void flash_firmware(const char* fullPath)
             for (int offset = 0; offset < length; offset += FLASH_BLOCK_SIZE)
             {
                 // Display
-                sprintf(tempstring, "Writing (%d)", parts_count);
+                sprintf(tempstring, "Writing (%d)", app->parts_count);
 
                 printf("%s - %#08x\n", tempstring, offset);
                 DisplayProgress((float)offset / (float)(length - FLASH_BLOCK_SIZE) * 100.0f);
@@ -934,19 +895,13 @@ void flash_firmware(const char* fullPath)
 
             // TODO: verify
 
-
-
-
-            // Notify OK
-            sprintf(tempstring, "OK: [%d] Length=%#08x", parts_count, length);
-
-            printf("%s\n", tempstring);
-            //DisplayFooter(tempstring);
         }
         
+        // Notify OK
+        printf("OK: [%d] Length=%#08x\n", app->parts_count, length);
 
-        parts[parts_count++] = slot;
-        curren_flash_address += slot.length;
+        app->parts_count++;
+        curren_flash_address += slot->length;
 
         // 64K align next partition
         if ((curren_flash_address & 0xffff) != 0) {
@@ -966,10 +921,10 @@ void flash_firmware(const char* fullPath)
     free(data);
 
     // Write partition table
-    write_partition_table(parts, parts_count, startFlashAddress);
+    write_partition_table(app->parts, app->parts_count, startFlashAddress);
 
     // Write app table
-    odroid_app_t *app = &apps[apps_count++];
+    apps_count++; // Everything went well, acknowledge the new app
     app->magic = APP_MAGIC;
     app->startOffset = startFlashAddress;
     app->endOffset = curren_flash_address - 1;
