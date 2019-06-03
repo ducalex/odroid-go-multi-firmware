@@ -36,6 +36,9 @@
 
 #define APP_MAGIC 0x1205
 
+#define FLASH_BLOCK_SIZE (64 * 1024)
+#define ERASE_BLOCK_SIZE (4 * 1024)
+
 #ifndef COMPILEDATE
 #define COMPILEDATE "none"
 #endif
@@ -380,6 +383,12 @@ static void remove_app(uint8_t index)
         size_t deletedappsize = app->endOffset - app->startOffset + 1;
         size_t flashEnd = apps[apps_count - 1].endOffset + 1;
 
+        sprintf(&tempstring, "Moving %.2f MB to 0x%x", (float)(flashEnd - newFlashOffset) / 1024 / 1024, app->startOffset);
+        ui_draw_title("Removing Application", tempstring);
+        DisplayHeader(app->description);
+        DisplayProgress(0);
+        UpdateDisplay();
+        
         printf("delete size: %d\n", deletedappsize);
 
         // Remove item
@@ -395,15 +404,21 @@ static void remove_app(uint8_t index)
         }
         
         // Defrag flash to match the new offsets
-        uint8_t *buffer = malloc(4096);
+        uint8_t *buffer = malloc(FLASH_BLOCK_SIZE); // We have 4MB of ram might as well use it!
 
-        for (size_t i = newFlashOffset; i < flashEnd; i += 4096) {
-            printf("Moving %x to %x\n", i + deletedappsize, i);
-            spi_flash_read(i + deletedappsize, buffer, 4096);
-            spi_flash_erase_range(i, 4096);
-            spi_flash_write(i, buffer, 4096);
+        for (size_t i = newFlashOffset; i < flashEnd; i += FLASH_BLOCK_SIZE) {
+            printf("Moving 0x%x to 0x%x\n", i + deletedappsize, i);
+
+            DisplayMessage("Defragmenting ... (E)");
+            spi_flash_erase_range(i, FLASH_BLOCK_SIZE);
+
+            DisplayMessage("Defragmenting ... (R)");
+            spi_flash_read(i + deletedappsize, buffer, FLASH_BLOCK_SIZE);
+
+            DisplayMessage("Defragmenting ... (W)");
+            spi_flash_write(i, buffer, FLASH_BLOCK_SIZE);
+
             DisplayProgress((float) (i - newFlashOffset) / (float)(flashEnd - newFlashOffset)  * 100.0);
-            UpdateDisplay();
         }
 
         free(buffer);
@@ -711,8 +726,7 @@ void flash_firmware(const char* fullPath)
     DisplayMessage("Verifying ...");
 
 
-    const int ERASE_BLOCK_SIZE = 4096;
-    void* data = malloc(ERASE_BLOCK_SIZE);
+    void* data = malloc(FLASH_BLOCK_SIZE);
     if (!data)
     {
         DisplayError("DATA MEMORY ERROR");
@@ -745,7 +759,7 @@ void flash_firmware(const char* fullPath)
     size_t check_offset = 0;
     while(true)
     {
-        count = fread(data, 1, ERASE_BLOCK_SIZE, file);
+        count = fread(data, 1, FLASH_BLOCK_SIZE, file);
         if (check_offset + count == file_size)
         {
             count -= 4;
@@ -754,7 +768,7 @@ void flash_firmware(const char* fullPath)
         checksum = crc32_le(checksum, data, count);
         check_offset += count;
 
-        if (count < ERASE_BLOCK_SIZE) break;
+        if (count < FLASH_BLOCK_SIZE) break;
     }
 
     printf("%s: checksum=%#010x\n", __func__, checksum);
@@ -874,18 +888,18 @@ void flash_firmware(const char* fullPath)
 
             // Write data
             int totalCount = 0;
-            for (int offset = 0; offset < length; offset += ERASE_BLOCK_SIZE)
+            for (int offset = 0; offset < length; offset += FLASH_BLOCK_SIZE)
             {
                 // Display
                 sprintf(tempstring, "Writing (%d)", parts_count);
 
                 printf("%s - %#08x\n", tempstring, offset);
-                DisplayProgress((float)offset / (float)(length - ERASE_BLOCK_SIZE) * 100.0f);
+                DisplayProgress((float)offset / (float)(length - FLASH_BLOCK_SIZE) * 100.0f);
                 DisplayMessage(tempstring);
 
                 // read
                 //printf("Reading offset=0x%x\n", offset);
-                count = fread(data, 1, ERASE_BLOCK_SIZE, file);
+                count = fread(data, 1, FLASH_BLOCK_SIZE, file);
                 if (count <= 0)
                 {
                     DisplayError("DATA READ ERROR");
@@ -899,8 +913,6 @@ void flash_firmware(const char* fullPath)
 
 
                 // flash
-                //printf("Writing offset=0x%x\n", offset);
-                //ret = esp_partition_write(part, offset, data, count);
                 ret = spi_flash_write(curren_flash_address + offset, data, count);
                 if (ret != ESP_OK)
         		{
@@ -932,14 +944,14 @@ void flash_firmware(const char* fullPath)
             //DisplayFooter(tempstring);
         }
         
-        // 64K align partition
-        if ((slot.length & 0xffff) != 0) {
-            slot.length = (slot.length & 0xffff0000) + 0xffff + 1;
-        }
 
         parts[parts_count++] = slot;
         curren_flash_address += slot.length;
 
+        // 64K align next partition
+        if ((curren_flash_address & 0xffff) != 0) {
+            curren_flash_address = (curren_flash_address & 0xffff0000) + 0xffff + 1;
+        }
 
         // Seek to next entry
         if (fseek(file, nextEntry, SEEK_SET) != 0)
@@ -951,6 +963,7 @@ void flash_firmware(const char* fullPath)
     }
 
     close(file);
+    free(data);
 
     // Write partition table
     write_partition_table(parts, parts_count, startFlashAddress);
@@ -960,14 +973,7 @@ void flash_firmware(const char* fullPath)
     app->magic = APP_MAGIC;
     app->startOffset = startFlashAddress;
     app->endOffset = curren_flash_address - 1;
-    app->parts_count = parts_count;
-    memcpy(&app->description, FirmwareDescription, FIRMWARE_DESCRIPTION_SIZE);
-    memcpy(&app->parts, parts, sizeof(odroid_partition_t) * PARTS_MAX);
-    memcpy(&app->tile, tileData, TILE_LENGTH);
     write_app_table();
-
-    free(tileData);
-    free(data);
 
     // turn LED off
     gpio_set_level(GPIO_NUM_2, 0);
