@@ -266,6 +266,14 @@ void cleanup_and_restart()
 
 void boot_application()
 {
+#ifndef USE_PATCHED_ESP_IDF
+    if (set_boot_needed == 0) {
+        set_boot_needed = 1;
+        cleanup_and_restart();
+    }
+    set_boot_needed = 0;
+#endif
+
     printf("Booting application.\n");
 
     // Set firmware active
@@ -515,8 +523,6 @@ static void write_partition_table(odroid_partition_t* parts, size_t parts_count,
 
         offset += parts[i].length;
     }
-
-    //abort();
 
     // Erase partition table
     if (ESP_PARTITION_TABLE_MAX_LEN > 4096)
@@ -933,12 +939,7 @@ void flash_firmware(const char* fullPath)
     }
 
     // boot firmware
-#ifdef USE_PATCHED_ESP_IDF
     boot_application();
-#else
-    set_boot_needed = 1;
-    cleanup_and_restart();
-#endif
 }
 
 
@@ -1155,9 +1156,6 @@ const char* ui_choose_file(const char* path)
             UpdateDisplay();
 
             boot_application();
-
-            // should not reach
-            abort();
         }
         else if (btn == ODROID_INPUT_B)
         {
@@ -1389,12 +1387,7 @@ void ui_choose_app()
 	        {
                 odroid_app_t *app = &apps[currentItem];
                 write_partition_table(app->parts, app->parts_count, app->startOffset);
-                #ifdef USE_PATCHED_ESP_IDF
-                    boot_application();
-                #else
-                    set_boot_needed = 1;
-                    cleanup_and_restart();
-                #endif
+                boot_application();
                 break;
 	        }
         }
@@ -1445,12 +1438,9 @@ void ui_choose_app()
 
 void app_main(void)
 {
-    #ifndef USE_PATCHED_ESP_IDF
     if (set_boot_needed == 1) {
-        set_boot_needed = 0;
         boot_application();
     }
-    #endif
 
     printf("odroid-go-firmware (Ver: %s). HEAP=%#010x\n", VERSION, esp_get_free_heap_size());
 
