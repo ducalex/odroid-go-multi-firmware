@@ -113,6 +113,8 @@ static int partition_count = -1;
 static int startTableEntry = -1;
 static int startFlashAddress = -1;
 
+static odroid_fw_t *fwInfoBuffer;
+
 uint16_t fb[320 * 240];
 UG_GUI gui;
 char tempstring[512];
@@ -1004,9 +1006,6 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
 	}
 	else
 	{
-        odroid_fw_t *fw = malloc(sizeof(odroid_fw_t));
-        if (!fw) abort();
-
 	    for (int line = 0; line < ITEM_COUNT; ++line)
 	    {
 			if (page + line >= fileCount) break;
@@ -1031,9 +1030,9 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
 			if (!fileName) abort();
 
             sprintf(&tempstring, "%s/%s", path, fileName);
-            bool valid = firmware_get_info(tempstring, fw);
+            bool valid = firmware_get_info(tempstring, fwInfoBuffer);
 
-            ui_draw_image(imageLeft, top + 2, TILE_WIDTH, TILE_HEIGHT, fw->fileHeader.tile);
+            ui_draw_image(imageLeft, top + 2, TILE_WIDTH, TILE_HEIGHT, fwInfoBuffer->fileHeader.tile);
 
             // Tile border
             //UG_DrawFrame(imageLeft - 1, top + 1, imageLeft + TILE_WIDTH, top + 2 + TILE_HEIGHT, C_BLACK);
@@ -1046,7 +1045,7 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
 
             if (valid) {
                 UG_SetForecolor(C_GRAY);
-                sprintf(&tempstring, "%.2f MB", (float)fw->totalLength / 1024 / 1024);
+                sprintf(&tempstring, "%.2f MB", (float)fwInfoBuffer->flashSize / 1024 / 1024);
             } else {
                 UG_SetForecolor(C_RED);
                 sprintf(&tempstring, "Invalid firmware");
@@ -1056,8 +1055,6 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
 	    }
 
         UpdateDisplay();
-
-        free(fw);
 	}
 }
 
@@ -1469,6 +1466,9 @@ void app_main(void)
     #endif
 
     printf("odroid-go-firmware (Ver: %s). HEAP=%#010x\n", VERSION, esp_get_free_heap_size());
+
+    fwInfoBuffer = malloc(sizeof(odroid_fw_t));
+    if (!fwInfoBuffer) abort();
 
     nvs_flash_init();
 
