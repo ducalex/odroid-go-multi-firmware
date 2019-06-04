@@ -115,6 +115,7 @@ static int startTableEntry = -1;
 static int startFlashAddress = -1;
 
 static odroid_fw_t *fwInfoBuffer;
+static uint8_t *dataBuffer;
 
 uint16_t fb[320 * 240];
 UG_GUI gui;
@@ -406,8 +407,6 @@ static void remove_app(uint8_t index)
         }
         
         // Defrag flash to match the new offsets
-        uint8_t *buffer = malloc(FLASH_BLOCK_SIZE); // We have 4MB of ram might as well use it!
-
         for (size_t i = newFlashOffset; i < flashEnd; i += FLASH_BLOCK_SIZE) {
             printf("Moving 0x%x to 0x%x\n", i + deletedappsize, i);
 
@@ -415,15 +414,13 @@ static void remove_app(uint8_t index)
             spi_flash_erase_range(i, FLASH_BLOCK_SIZE);
 
             DisplayMessage("Defragmenting ... (R)");
-            spi_flash_read(i + deletedappsize, buffer, FLASH_BLOCK_SIZE);
+            spi_flash_read(i + deletedappsize, dataBuffer, FLASH_BLOCK_SIZE);
 
             DisplayMessage("Defragmenting ... (W)");
-            spi_flash_write(i, buffer, FLASH_BLOCK_SIZE);
+            spi_flash_write(i, dataBuffer, FLASH_BLOCK_SIZE);
 
             DisplayProgress((float) (i - newFlashOffset) / (float)(flashEnd - newFlashOffset)  * 100.0);
         }
-
-        free(buffer);
     }
 
     if (apps_count > 0) {
@@ -735,8 +732,7 @@ void flash_firmware(const char* fullPath)
     size_t check_offset = 0;
     while(true)
     {
-        count = fread(data, 1, FLASH_BLOCK_SIZE, file);
-        if (check_offset + count == file_size)
+        count = fread(dataBuffer, 1, FLASH_BLOCK_SIZE, file);
         {
             count -= 4;
         }
@@ -854,7 +850,7 @@ void flash_firmware(const char* fullPath)
 
                 // read
                 //printf("Reading offset=0x%x\n", offset);
-                count = fread(data, 1, FLASH_BLOCK_SIZE, file);
+                count = fread(dataBuffer, 1, FLASH_BLOCK_SIZE, file);
                 if (count <= 0)
                 {
                     DisplayError("DATA READ ERROR");
@@ -868,7 +864,7 @@ void flash_firmware(const char* fullPath)
 
 
                 // flash
-                ret = spi_flash_write(curren_flash_address + offset, data, count);
+                ret = spi_flash_write(curren_flash_address + offset, dataBuffer, count);
                 if (ret != ESP_OK)
         		{
         			printf("spi_flash_write failed. address=%#08x\n", curren_flash_address + offset);
@@ -912,7 +908,6 @@ void flash_firmware(const char* fullPath)
     }
 
     close(file);
-    free(data);
 
     // Write partition table
     write_partition_table(app->parts, app->parts_count, startFlashAddress);
@@ -1459,9 +1454,6 @@ void app_main(void)
 
     printf("odroid-go-firmware (Ver: %s). HEAP=%#010x\n", VERSION, esp_get_free_heap_size());
 
-    fwInfoBuffer = malloc(sizeof(odroid_fw_t));
-    if (!fwInfoBuffer) abort();
-
     nvs_flash_init();
 
     input_init();
@@ -1476,6 +1468,16 @@ void app_main(void)
     ili9341_clear(0xffff);
 
     UG_Init(&gui, pset, 320, 240);
+
+    fwInfoBuffer = malloc(sizeof(odroid_fw_t));
+    dataBuffer = malloc(FLASH_BLOCK_SIZE);
+    
+    // If we can't allocate our basic buffers we might as well give up now
+    if (!fwInfoBuffer || !dataBuffer)
+    {
+        DisplayError("MEMORY ALLOCATION ERROR");
+        indicate_error();
+    }
 
     read_partition_table();
     read_app_table();
