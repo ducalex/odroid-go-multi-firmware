@@ -32,7 +32,7 @@
 #define TILE_HEIGHT (48)
 #define TILE_LENGTH (TILE_WIDTH * TILE_HEIGHT * 2)
 
-#define APP_MAGIC 0x1205
+#define APP_MAGIC 0x1206
 
 #define FLASH_BLOCK_SIZE (64 * 1024)
 #define ERASE_BLOCK_SIZE (4 * 1024)
@@ -74,6 +74,7 @@ typedef struct
 
     uint32_t flags;
     uint32_t length;
+    uint32_t dataLength;
 } odroid_partition_t;
 
 typedef struct
@@ -589,10 +590,8 @@ bool firmware_get_info(const char* filename, odroid_fw_t* outData)
         outData->totalLength += part->length;
         outData->parts_count++;
 
-        // Data Length
-        count = fread(&length, 1, sizeof(length), file);
-        if (count != sizeof(length)) break;
-    
+        length = part->dataLength;
+        
         fseek(file, ftell(file) + length, SEEK_SET);
     }
     
@@ -799,14 +798,7 @@ void flash_firmware(const char* fullPath)
         }
 
 
-        // Data Length
-        uint32_t length;
-        count = fread(&length, 1, sizeof(length), file);
-        if (count != sizeof(length))
-        {
-            DisplayError("LENGTH READ ERROR");
-            indicate_error();
-        }
+        uint32_t length = slot->dataLength;
 
         if (length > slot->length)
         {
