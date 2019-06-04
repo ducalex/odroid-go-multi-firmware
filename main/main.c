@@ -893,11 +893,6 @@ void flash_firmware(const char* fullPath)
         app->parts_count++;
         curren_flash_address += slot->length;
 
-        // 64K align next partition
-        if ((curren_flash_address & 0xffff) != 0) {
-            curren_flash_address = (curren_flash_address & 0xffff0000) + 0xffff + 1;
-        }
-
         // Seek to next entry
         if (fseek(file, nextEntry, SEEK_SET) != 0)
         {
@@ -907,7 +902,12 @@ void flash_firmware(const char* fullPath)
 
     }
 
-    close(file);
+    fclose(file);
+
+    // 64K align our endOffset
+    if ((curren_flash_address & 0xffff) != 0) {
+        curren_flash_address = (curren_flash_address & 0xffff0000) + 0xffff + 1;
+    }
 
     // Write partition table
     write_partition_table(app->parts, app->parts_count, startFlashAddress);
