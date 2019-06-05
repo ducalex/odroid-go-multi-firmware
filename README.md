@@ -51,8 +51,8 @@ To access the boot menu you then hold **A** while booting.
 
 
 # Compilation
-You can compile with the standard esp-idf with one caveat and it affects only the .fw installation method:
-When you select an app to boot, you might be rebooted into the stock firmware where you need to press menu to actually boot your app.
+You need to apply the following patch to your esp-idf:
 
-Otherwise apply this patch to an otherwise unmodified esp-idf:
 https://github.com/OtherCrashOverride/esp-idf/commit/49fbef73c300920d2f63c9afb705eefabe3dac87
+
+The previously included no-patch code was too unreliable and it has been removed as of 20190605.

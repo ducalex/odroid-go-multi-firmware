@@ -19,8 +19,6 @@
 
 #include "../components/ugui/ugui.h"
 
-#define USE_PATCHED_ESP_IDF // comment if you don't have esp_partition_reload_table()
-
 #define ESP_PARTITION_TABLE_OFFSET CONFIG_PARTITION_TABLE_OFFSET /* Offset of partition table. Backwards-compatible name.*/
 #define ESP_PARTITION_TABLE_MAX_LEN 0xC00 /* Maximum length of partition table data */
 #define ESP_PARTITION_TABLE_MAX_ENTRIES (ESP_PARTITION_TABLE_MAX_LEN / sizeof(esp_partition_info_t)) /* Maximum length of partition table data, including terminating entry */
@@ -280,14 +278,6 @@ void cleanup_and_restart()
 
 void boot_application()
 {
-#ifndef USE_PATCHED_ESP_IDF
-    if (set_boot_needed == 0) {
-        set_boot_needed = 1;
-        cleanup_and_restart();
-    }
-    set_boot_needed = 0;
-#endif
-
     printf("Booting application.\n");
 
     // Set firmware active
@@ -559,9 +549,7 @@ static void write_partition_table(odroid_partition_t* parts, size_t parts_count,
         indicate_error();
     }
 
-#ifdef USE_PATCHED_ESP_IDF
     esp_partition_reload_table();
-#endif
 }
 
 
@@ -1394,11 +1382,6 @@ void ui_choose_app()
 
 void app_main(void)
 {
-#ifndef USE_PATCHED_ESP_IDF
-    if (set_boot_needed == 1) {
-        boot_application();
-    }
-#endif
     printf("odroid-go-firmware (Ver: %s). HEAP=%#010x\n", VERSION, esp_get_free_heap_size());
 
     nvs_flash_init();
