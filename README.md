@@ -50,9 +50,20 @@ To access the boot menu you then hold **A** while booting.
 > A: Unfortunately, I haven't found a reliable way of doing that yet
 
 
+# To do / Ideas
+
+- Defrag only when needed for faster erase
+
+- XModem/YModem protocol to transfer applications via USB
+
+- Add back test partition flashing (utility.bin)
+
+- Copy a flashed firmware back to the sd card as a .fw
+
+
 # Compilation
 You need to apply the following patch to your esp-idf:
 
 https://github.com/OtherCrashOverride/esp-idf/commit/49fbef73c300920d2f63c9afb705eefabe3dac87
 
-The previously included no-patch code was too unreliable and it has been removed as of 20190605.
+The previously included no-patch code was too unreliable and it has been removed as of 20190604.
