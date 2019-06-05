@@ -33,10 +33,6 @@ To access the boot menu you then hold **A** while booting.
 
 # Questions
 
->  **Q: Why is erase very slow sometimes?**
-> 
-> A: To avoid fragmenting the flash memory we shift all apps to fill the new empty space, which can be very long in some instances. Eventually I hope to improve the process and make defrag run on demand or only when running out of space.
-
 > **Q: How does it work?**
 > 
 > A: When you select an application to boot, the ESP32's partition table is rewritten to make it seem like the app is the only thing there. This firmware keeps track of what is installed and where. The app will then boot every time you power up the system, until you change it.
@@ -52,13 +48,15 @@ To access the boot menu you then hold **A** while booting.
 
 # To do / Ideas
 
-- Defrag only when needed for faster erase
+- Add sorting options (flash order/install order/alphabetical)
 
 - XModem/YModem protocol to transfer applications via USB
 
 - Add back test partition flashing (utility.bin)
 
 - Copy a flashed firmware back to the sd card as a .fw
+
+- Brightness control
 
 
 # Compilation

@@ -12,6 +12,7 @@
 #include "rom/crc.h"
 
 #include <string.h>
+#include <stdlib.h>
 
 #include "odroid_sdcard.h"
 #include "odroid_display.h"
@@ -19,12 +20,16 @@
 
 #include "../components/ugui/ugui.h"
 
+#define ALIGN_ADDRESS(val, alignment) (((val & (alignment-1)) != 0) ? (val & ~(alignment-1)) + alignment : val)
+
 #define ESP_PARTITION_TABLE_OFFSET CONFIG_PARTITION_TABLE_OFFSET /* Offset of partition table. Backwards-compatible name.*/
 #define ESP_PARTITION_TABLE_MAX_LEN 0xC00 /* Maximum length of partition table data */
 #define ESP_PARTITION_TABLE_MAX_ENTRIES (ESP_PARTITION_TABLE_MAX_LEN / sizeof(esp_partition_info_t)) /* Maximum length of partition table data, including terminating entry */
 
 #define PART_SUBTYPE_FACTORY 0x00
 #define PART_SUBTYPE_FACTORY_DATA 0xFE
+
+#define FLASH_SIZE (16 * 1024 * 1024)
 
 #define TILE_WIDTH (86)
 #define TILE_HEIGHT (48)
@@ -104,6 +109,12 @@ typedef struct
     size_t dataOffset;
     uint32_t checksum;
 } odroid_fw_t;
+
+typedef struct
+{
+    size_t offset;
+    size_t size;    
+} odroid_flash_block_t;
 // ------
 
 static odroid_app_t* apps;
@@ -300,6 +311,14 @@ void boot_application()
 }
 
 
+int sort_app_table(const void * a, const void * b)
+{
+  if ( (*(odroid_app_t*)a).startOffset < (*(odroid_app_t*)b).startOffset ) return -1;
+  if ( (*(odroid_app_t*)a).startOffset > (*(odroid_app_t*)b).startOffset ) return 1;
+  return 0;
+}
+
+
 static void read_app_table()
 {
     esp_err_t err;
@@ -337,16 +356,11 @@ static void read_app_table()
         if (apps[i].magic != APP_MAGIC) {
             break;
         }
-        if (apps[i].endOffset + 1 > startFlashAddress) {
-            startFlashAddress = apps[i].endOffset + 1;
-        }
         apps_count++;
     }
 
     //64K align the address (https://docs.espressif.com/projects/esp-idf/en/latest/api-guides/partition-tables.html#offset-size)
-    if ((startFlashAddress & 0xffff) != 0) {
-        startFlashAddress = (startFlashAddress & 0xffff0000) + 0xffff + 1;
-    }
+    startFlashAddress = ALIGN_ADDRESS(startFlashAddress, 0x10000);
     
     printf("App count: %d\n", apps_count);
 }
@@ -367,6 +381,8 @@ static void write_app_table()
         memset(&apps[i], 0xff, sizeof(odroid_app_t));
     }
 
+    qsort(apps, apps_count, sizeof(odroid_app_t), &sort_app_table);
+
     err = esp_partition_erase_range(app_table_part, 0, app_table_part->size);
     if (err != ESP_OK)
     {
@@ -383,64 +399,6 @@ static void write_app_table()
 
     printf("Written app table %d\n", apps_count);
 }
-
-
-static void remove_app(uint8_t index)
-{
-    if (index == apps_count -1) { // It's the last one, easy then!
-        apps_count--;
-    }
-    else { // We must defrag
-        odroid_app_t *app = &apps[index];
-        size_t newFlashOffset = app->startOffset;
-        size_t deletedappsize = app->endOffset - app->startOffset + 1;
-        size_t flashEnd = apps[apps_count - 1].endOffset + 1;
-
-        sprintf(&tempstring, "Moving %.2f MB to 0x%x", (float)(flashEnd - newFlashOffset) / 1024 / 1024, app->startOffset);
-        ui_draw_title("Removing Application", tempstring);
-        DisplayHeader(app->description);
-        DisplayTile(app->tile);
-        DisplayProgress(0);
-        DisplayMessage("Removing ...");
-        
-        printf("delete size: %d\n", deletedappsize);
-
-        // Remove item
-        for (int i = index + 1; i < apps_count; i++) {
-            memcpy(&apps[i - 1], &apps[i], sizeof(odroid_app_t));
-        }
-        apps_count--;
-        
-        // Adjust offsets for other apps
-        for (int i = index; i < apps_count; i++) {
-            apps[i].startOffset -= deletedappsize;
-            apps[i].endOffset -= deletedappsize;
-        }
-        
-        // Defrag flash to match the new offsets
-        for (size_t i = newFlashOffset; i < flashEnd; i += FLASH_BLOCK_SIZE) {
-            printf("Moving 0x%x to 0x%x\n", i + deletedappsize, i);
-
-            DisplayMessage("Defragmenting ... (E)");
-            spi_flash_erase_range(i, FLASH_BLOCK_SIZE);
-
-            DisplayMessage("Defragmenting ... (R)");
-            spi_flash_read(i + deletedappsize, dataBuffer, FLASH_BLOCK_SIZE);
-
-            DisplayMessage("Defragmenting ... (W)");
-            spi_flash_write(i, dataBuffer, FLASH_BLOCK_SIZE);
-
-            DisplayProgress((float) (i - newFlashOffset) / (float)(flashEnd - newFlashOffset)  * 100.0);
-        }
-    }
-
-    if (apps_count > 0) {
-        startFlashAddress = apps[apps_count-1].endOffset + 1;
-    }
-
-    write_app_table();
-}
-
 
 
 static void read_partition_table()
@@ -518,10 +476,7 @@ static void write_partition_table(odroid_partition_t* parts, size_t parts_count,
         part->subtype = parts[i].subtype;
         part->pos.offset = flashOffset + offset;
         part->pos.size = parts[i].length;
-        for (int j = 0; j < 16; ++j)
-        {
-            part->label[j] = parts[i].label[j];
-        }
+        memcpy(&part->label, parts[i].label, 16);
         part->flags = parts[i].flags;
 
         offset += parts[i].length;
@@ -552,6 +507,130 @@ static void write_partition_table(odroid_partition_t* parts, size_t parts_count,
     esp_partition_reload_table();
 }
 
+
+
+void defrag_flash()
+{
+    size_t nextStartOffset = startFlashAddress;
+    size_t totalBytesToMove = 0;
+    size_t totalBytesMoved = 0;
+
+    // First loop to get total for the progress bar
+    for (int i = 0; i < apps_count; i++)
+    {
+        if (apps[i].startOffset > nextStartOffset)
+        {
+            totalBytesToMove += (apps[i].endOffset - apps[i].startOffset);
+        } else {
+            nextStartOffset = apps[i].endOffset + 1;
+        }
+    }
+
+    sprintf(&tempstring, "Moving: %.2f MB", (float)totalBytesToMove / 1024 / 1024);
+    ui_draw_title("Defragmenting flash", tempstring);
+    DisplayHeader("Making some space...");
+
+    for (int i = 0; i < apps_count; i++)
+    {
+        if (apps[i].startOffset > nextStartOffset)
+        {
+            gpio_set_level(GPIO_NUM_2, 1);
+
+            size_t app_size = apps[i].endOffset - apps[i].startOffset;
+            size_t newOffset = nextStartOffset, oldOffset = apps[i].startOffset;
+            // move
+            for (size_t i = 0; i < app_size; i += FLASH_BLOCK_SIZE)
+            {
+                printf("Moving 0x%x to 0x%x\n", oldOffset + i, newOffset + i);
+
+                DisplayMessage("Defragmenting ... (E)");
+                spi_flash_erase_range(newOffset + i, FLASH_BLOCK_SIZE);
+
+                DisplayMessage("Defragmenting ... (R)");
+                spi_flash_read(oldOffset + i, dataBuffer, FLASH_BLOCK_SIZE);
+
+                DisplayMessage("Defragmenting ... (W)");
+                spi_flash_write(newOffset + i, dataBuffer, FLASH_BLOCK_SIZE);
+                
+                totalBytesMoved += FLASH_BLOCK_SIZE;
+
+                DisplayProgress((float) totalBytesMoved / totalBytesToMove  * 100.0);
+            }
+
+            apps[i].startOffset = newOffset;
+            apps[i].endOffset = newOffset + app_size;
+
+            gpio_set_level(GPIO_NUM_2, 0);
+        }
+
+        nextStartOffset = apps[i].endOffset + 1;
+    }
+
+    write_app_table();
+}
+
+
+void find_free_blocks(odroid_flash_block_t **blocks, size_t *count, size_t *totalFreeSpace)
+{
+    //read_app_table();
+    size_t previousBlockEnd = startFlashAddress;
+    
+    (*blocks) = malloc(sizeof(odroid_flash_block_t) * 32);
+
+    (*totalFreeSpace) = 0;
+    (*count) = 0;
+
+    for (int i = 0; i < apps_count; i++)
+    {
+        size_t free_space = apps[i].startOffset - previousBlockEnd;
+        
+        if (free_space > 0) {
+            odroid_flash_block_t *block = &(*blocks)[(*count)++];
+            block->offset = previousBlockEnd;
+            block->size = free_space;
+            (*totalFreeSpace) += block->size;
+            printf("Free block: %d 0x%x %d\n", i, block->offset, free_space / 1024);
+        }
+        
+        previousBlockEnd = apps[i].endOffset + 1;
+    }
+
+    if ((FLASH_SIZE - previousBlockEnd) > 0) {
+        odroid_flash_block_t *block = &(*blocks)[(*count)++];
+        block->offset = previousBlockEnd;
+        block->size = (FLASH_SIZE - previousBlockEnd);
+        (*totalFreeSpace) += block->size;
+        printf("Free block: end 0x%x %d\n", block->offset, block->size / 1024);
+    }
+}
+
+
+int find_free_block(size_t size, bool defragIfNeeded)
+{
+    //read_app_table();
+    odroid_flash_block_t *blocks;
+    size_t count, totalFreeSpace;
+
+    find_free_blocks(&blocks, &count, &totalFreeSpace);
+    
+    int result = -1;
+
+    for (int i = 0; i < count; i++)
+    {
+        if (blocks[i].size >= size) {
+            result = blocks[i].offset;
+            break;
+        }
+    }
+
+    if (result < 0 && totalFreeSpace >= size) {
+        defrag_flash();
+        result = find_free_block(size, false);
+    }
+    
+    free(blocks);
+    return result;
+}
 
 
 bool firmware_get_info(const char* filename, odroid_fw_t* outData)
@@ -642,11 +721,7 @@ void flash_firmware(const char* fullPath)
     read_partition_table();
     read_app_table();
     
-    odroid_app_t *app = &apps[apps_count];
-    memset(app, 0x00, sizeof(odroid_app_t));
-
-    sprintf(&tempstring, "Destination: 0x%x", startFlashAddress);
-    ui_draw_title("Install Application", tempstring);
+    ui_draw_title("Install Application", "Destination: Pending");
     UpdateDisplay();
 
     printf("Opening file '%s'.\n", fullPath);
@@ -667,15 +742,22 @@ void flash_firmware(const char* fullPath)
         can_proceed = false;
     }
 
+    int currentFlashAddress = find_free_block(fw->flashSize, true);
+
+    odroid_app_t *app = &apps[apps_count];
+    memset(app, 0x00, sizeof(odroid_app_t));
+    
     memcpy(app->description, fw->fileHeader.description, FIRMWARE_DESCRIPTION_SIZE);
     memcpy(app->tile, fw->fileHeader.tile, TILE_LENGTH);
     
     printf("FirmwareDescription='%s'\n", app->description);
 
+    sprintf(&tempstring, "Destination: 0x%x", currentFlashAddress);
+    ui_draw_title("Install Application", tempstring);
     DisplayHeader(app->description);
     DisplayTile(app->tile);
 
-    if ((startFlashAddress + fw->flashSize) > 16 * 1024 * 1024)
+    if (currentFlashAddress == -1)
     {
         DisplayError("NOT ENOUGH FREE SPACE");
         can_proceed = false;
@@ -734,10 +816,10 @@ void flash_firmware(const char* fullPath)
     // restore location to end of description
     fseek(file, fw->dataOffset, SEEK_SET);
 
+    app->magic = APP_MAGIC;
+    app->startOffset = currentFlashAddress;
 
     // Copy the firmware
-    size_t curren_flash_address = startFlashAddress;
-
     while(true)
     {
         if (ftell(file) >= (fw->fileSize - sizeof(checksum)))
@@ -776,7 +858,7 @@ void flash_firmware(const char* fullPath)
             DisplayProgress(0);
             DisplayMessage(tempstring);
 
-            esp_err_t ret = spi_flash_erase_range(curren_flash_address, eraseBlocks * ERASE_BLOCK_SIZE);
+            esp_err_t ret = spi_flash_erase_range(currentFlashAddress, eraseBlocks * ERASE_BLOCK_SIZE);
             if (ret != ESP_OK)
             {
                 printf("spi_flash_erase_range failed. eraseBlocks=%d\n", eraseBlocks);
@@ -816,10 +898,10 @@ void flash_firmware(const char* fullPath)
 
 
                 // flash
-                ret = spi_flash_write(curren_flash_address + offset, dataBuffer, count);
+                ret = spi_flash_write(currentFlashAddress + offset, dataBuffer, count);
                 if (ret != ESP_OK)
         		{
-        			printf("spi_flash_write failed. address=%#08x\n", curren_flash_address + offset);
+        			printf("spi_flash_write failed. address=%#08x\n", currentFlashAddress + offset);
                     DisplayError("WRITE ERROR");
                     indicate_error();
         		}
@@ -843,7 +925,7 @@ void flash_firmware(const char* fullPath)
         printf("OK: [%d] Length=%#08x\n", app->parts_count, length);
 
         app->parts_count++;
-        curren_flash_address += slot->length;
+        currentFlashAddress += slot->length;
 
         // Seek to next entry
         if (fseek(file, nextEntry, SEEK_SET) != 0)
@@ -857,18 +939,14 @@ void flash_firmware(const char* fullPath)
     fclose(file);
 
     // 64K align our endOffset
-    if ((curren_flash_address & 0xffff) != 0) {
-        curren_flash_address = (curren_flash_address & 0xffff0000) + 0xffff + 1;
-    }
+    currentFlashAddress = ALIGN_ADDRESS(currentFlashAddress, 0x10000);
+    app->endOffset = currentFlashAddress - 1;
 
     // Write partition table
-    write_partition_table(app->parts, app->parts_count, startFlashAddress);
+    write_partition_table(app->parts, app->parts_count, app->startOffset);
 
     // Write app table
     apps_count++; // Everything went well, acknowledge the new app
-    app->magic = APP_MAGIC;
-    app->startOffset = startFlashAddress;
-    app->endOffset = curren_flash_address - 1;
     write_app_table();
 
     // turn LED off
@@ -917,8 +995,14 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
 
     int page = currentItem / ITEM_COUNT;
     page *= ITEM_COUNT;
+    
+    odroid_flash_block_t *blocks;
+    size_t count, totalFreeSpace;
 
-    sprintf(&tempstring, "Free space: %.2fMB", (double)(0x1000000 - startFlashAddress) / 1024 / 1024);
+    find_free_blocks(&blocks, &count, &totalFreeSpace);
+    free(blocks);
+    
+    sprintf(&tempstring, "Free space: %.2fMB (%d block)", (double)totalFreeSpace / 1024 / 1024, count);
     
     ui_draw_title("Select a file", tempstring);
 
@@ -1337,6 +1421,11 @@ void ui_choose_app()
                 DisplayMessage("Setting boot partition ...");
                 boot_application();
             }
+            else if (btn == ODROID_INPUT_SELECT)
+            {
+                defrag_flash();
+                ui_draw_app_page(currentItem);
+            }
         }
 
         if (btn == ODROID_INPUT_MENU)
@@ -1362,7 +1451,10 @@ void ui_choose_app()
                     }
                     break;
                 case 1:
-                    remove_app(currentItem);
+                    memmove(&apps[currentItem], &apps[currentItem + 1], 
+                            (apps_max - currentItem) * sizeof(odroid_app_t));
+                    apps_count--;
+                    write_app_table();
                     break;
                 case 2:
                     memset(apps, 0xFF, apps_max * sizeof(odroid_app_t));
