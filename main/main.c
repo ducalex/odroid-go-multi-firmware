@@ -1094,13 +1094,6 @@ const char* ui_choose_file(const char* path)
             result = fullPath;
             break;
         }
-        else if (btn == ODROID_INPUT_MENU)
-        {
-            ui_draw_title("ODROID-GO", VERSION);
-            DisplayMessage("Exiting ...");
-
-            boot_application();
-        }
         else if (btn == ODROID_INPUT_B)
         {
             break;
@@ -1203,7 +1196,7 @@ static void ui_draw_app_page(int currentItem)
     int page = currentItem / ITEM_COUNT;
     page *= ITEM_COUNT;
 
-    ui_draw_title("ODROID-GO", "[START] Menu    |    [A] Boot App");
+    ui_draw_title("ODROID-GO", "[MENU] Menu   |   [A] Boot App");
 
     const int innerHeight = 240 - (16 * 2); // 208
     const int itemHeight = innerHeight / ITEM_COUNT; // 52
@@ -1329,14 +1322,24 @@ void ui_choose_app()
 	        }
 	        else if(btn == ODROID_INPUT_A)
 	        {
+                ui_draw_title("ODROID-GO", VERSION);
+                DisplayMessage("Updating partitions ...");
+
                 odroid_app_t *app = &apps[currentItem];
                 write_partition_table(app->parts, app->parts_count, app->startOffset);
+
+                DisplayMessage("Setting boot partition ...");
                 boot_application();
-                break;
 	        }
+            else if (btn == ODROID_INPUT_VOLUME)
+            {
+                ui_draw_title("ODROID-GO", VERSION);
+                DisplayMessage("Setting boot partition ...");
+                boot_application();
+            }
         }
 
-        if (btn == ODROID_INPUT_START)
+        if (btn == ODROID_INPUT_MENU)
         {
             const char options[5][32] = {
                 "Install from SD Card", 
