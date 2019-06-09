@@ -33,9 +33,8 @@
 
 #define TILE_WIDTH (86)
 #define TILE_HEIGHT (48)
-#define TILE_LENGTH (TILE_WIDTH * TILE_HEIGHT * 2)
 
-#define APP_MAGIC 0x1206
+#define APP_MAGIC 0x1207
 
 #define FLASH_BLOCK_SIZE (64 * 1024)
 #define ERASE_BLOCK_SIZE (4 * 1024)
@@ -53,8 +52,7 @@
 #define FIRMWARE_HEADER_SIZE (24)
 #define FIRMWARE_DESCRIPTION_SIZE (40)
 #define FIRMWARE_PARTS_MAX (20)
-
-static RTC_NOINIT_ATTR int set_boot_needed = 0;
+#define FIRMWARE_TILE_SIZE (TILE_WIDTH * TILE_HEIGHT)
 
 const char* SD_CARD = "/sd";
 //const char* HEADER = "ODROIDGO_FIRMWARE_V00_00";
@@ -78,25 +76,29 @@ typedef struct
     uint32_t flags;
     uint32_t length;
     uint32_t dataLength;
-} odroid_partition_t;
+} odroid_partition_t; // __packed
 
 typedef struct
 {
     uint16_t magic;
+    uint16_t flags;
     uint32_t startOffset;
     uint32_t endOffset;
-    char description[FIRMWARE_DESCRIPTION_SIZE];
+    char     description[FIRMWARE_DESCRIPTION_SIZE];
+    char     filename[FIRMWARE_DESCRIPTION_SIZE];
+    uint16_t tile[FIRMWARE_TILE_SIZE];
     odroid_partition_t parts[FIRMWARE_PARTS_MAX];
     uint8_t parts_count;
-    uint8_t tile[TILE_LENGTH];
-    uint8_t _reserved[256];
-} odroid_app_t;
+    uint8_t _reserved0;
+    uint8_t _reserved1;
+    uint8_t _reserved2;
+} odroid_app_t; // __packed
 
 typedef struct
 {
     char header[FIRMWARE_HEADER_SIZE];
     char description[FIRMWARE_DESCRIPTION_SIZE];
-    uint8_t tile [TILE_LENGTH];
+    uint16_t tile[FIRMWARE_TILE_SIZE];
 } odroid_fw_header_t;
 
 typedef struct
@@ -747,8 +749,9 @@ void flash_firmware(const char* fullPath)
     odroid_app_t *app = &apps[apps_count];
     memset(app, 0x00, sizeof(odroid_app_t));
     
-    memcpy(app->description, fw->fileHeader.description, FIRMWARE_DESCRIPTION_SIZE);
-    memcpy(app->tile, fw->fileHeader.tile, TILE_LENGTH);
+    strncpy(app->description, fw->fileHeader.description, FIRMWARE_DESCRIPTION_SIZE-1);
+    strncpy(app->filename, strrchr(fullPath, '/'), FIRMWARE_DESCRIPTION_SIZE-1);
+    memcpy(app->tile, fw->fileHeader.tile, FIRMWARE_TILE_SIZE * 2);
     
     printf("FirmwareDescription='%s'\n", app->description);
 
