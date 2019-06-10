@@ -1,10 +1,13 @@
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "esp_wifi.h"
 #include "esp_system.h"
 #include "esp_event.h"
 #include "esp_event_loop.h"
 #include "nvs_flash.h"
 #include "driver/gpio.h"
+#include "driver/adc.h"
+#include "esp_adc_cal.h"
 #include "esp_partition.h"
 #include "esp_ota_ops.h"
 #include "esp_heap_caps.h"
@@ -13,6 +16,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 
 #include "odroid_sdcard.h"
 #include "odroid_display.h"
@@ -60,7 +64,14 @@
 #define FIRMWARE_PARTS_MAX (20)
 #define FIRMWARE_TILE_SIZE (TILE_WIDTH * TILE_HEIGHT)
 
+#define BATTERY_VMAX 420
+#define BATTERY_VMIN 330
+
+#define ITEM_COUNT (4)
+
 const char* SD_CARD = "/sd";
+const char* FIRMWARE_PATH = "/sd/odroid/firmware";
+
 //const char* HEADER = "ODROIDGO_FIRMWARE_V00_00";
 const char* HEADER_V00_01 = "ODROIDGO_FIRMWARE_V00_01";
 
@@ -82,7 +93,7 @@ typedef struct
     uint32_t flags;
     uint32_t length;
     uint32_t dataLength;
-} odroid_partition_t; // __packed
+} odroid_partition_t; // __attribute__((packed))
 
 typedef struct
 {
@@ -97,7 +108,7 @@ typedef struct
     uint8_t parts_count;
     uint8_t _reserved0;
     uint16_t installSeq;
-} odroid_app_t; // __packed
+} odroid_app_t; // __attribute__((packed))
 
 typedef struct
 {
@@ -120,7 +131,7 @@ typedef struct
 typedef struct
 {
     size_t offset;
-    size_t size;    
+    size_t size;
 } odroid_flash_block_t;
 // ------
 
@@ -138,16 +149,49 @@ static int startFlashAddress = -1;
 static odroid_fw_t *fwInfoBuffer;
 static uint8_t *dataBuffer;
 
-uint16_t fb[320 * 240];
-UG_GUI gui;
-char tempstring[512];
+static uint16_t fb[320 * 240];
+static UG_GUI gui;
+static char tempstring[512];
 
-#define ITEM_COUNT (4)
-char** files;
-int fileCount;
-const char* path = "/sd/odroid/firmware";
+static esp_err_t sdcardret;
 
-esp_err_t sdcardret;
+static int batteryPercent = 0;
+
+
+static void battery_task(void *arg)
+{
+    // Some of that code is from Odroid GO Arduino library. Added rolling average for better results
+    esp_adc_cal_characteristics_t adc_cal;
+    adc1_config_width(ADC_WIDTH_BIT_12);
+    adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_11);
+    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, 1100, &adc_cal);
+
+    const int count = 128;
+    uint32_t samples[count];
+    uint32_t loops = 0;
+
+    while(1)
+    {
+        samples[loops % count] = adc1_get_raw((adc1_channel_t) ADC1_CHANNEL_0);
+
+        uint32_t total = 0;
+        for (int i = 0; i < count; i++)
+        {
+            total += samples[i];
+        }
+
+        double voltage = (double) esp_adc_cal_raw_to_voltage(total / count, &adc_cal) * 2 / 1000;
+
+        batteryPercent = 101 - (101 / pow(1 + pow(1.33 * ((int)(voltage * 100) - BATTERY_VMIN)
+                                                            / (BATTERY_VMAX - BATTERY_VMIN), 4.5), 3));
+
+        if (batteryPercent >= 100)
+            batteryPercent = 100;
+
+        if (++loops > count)
+            vTaskDelay(25);
+    }
+}
 
 
 static void ui_draw_title(const char*, const char*);
@@ -1025,6 +1069,20 @@ static void ui_draw_title(const char* TITLE, const char* FOOTER)
 }
 
 
+static void ui_draw_indicators(int page, int totalPages)
+{
+    UG_FontSelect(&FONT_8X8);
+    UG_SetForecolor(0x8C51);
+
+    // Page indicator
+    sprintf(&tempstring, "%d/%d", page, totalPages);
+    UG_PutString(4, 4, tempstring);
+
+    // Battery indicator
+    sprintf(&tempstring, "%d%%", batteryPercent);
+    UG_PutString(320 - (9 * strlen(tempstring)) - 4, 4, tempstring);
+}
+
 
 static void ui_draw_row(int line, char *line1, char* line2, uint16_t color, uint16_t *tile, bool selected)
 {
@@ -1039,7 +1097,7 @@ static void ui_draw_row(int line, char *line1, char* line2, uint16_t color, uint
     const short textLeft = 320 - rightWidth;
 
     short top = 16 + (line * itemHeight) - 1;
-    
+
     UG_FontSelect(&FONT_8X12);
 
     UG_SetBackcolor(selected ? C_YELLOW : C_WHITE);
@@ -1068,6 +1126,7 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
     sprintf(&tempstring, "Free space: %.2fMB (%d block)", (double)totalFreeSpace / 1024 / 1024, count);
     
     ui_draw_title("Select a file", tempstring);
+    ui_draw_indicators(page / ITEM_COUNT + 1, (int)ceil((double)fileCount / ITEM_COUNT));
 
 	if (fileCount < 1)
 	{
@@ -1083,7 +1142,7 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
         char* fileName = files[page + line];
         if (!fileName) abort();
 
-        sprintf(&tempstring, "%s/%s", path, fileName);
+        sprintf(&tempstring, "%s/%s", FIRMWARE_PATH, fileName);
         bool valid = firmware_get_info(tempstring, fwInfoBuffer);
 
         strcpy(line1, fileName);
@@ -1119,8 +1178,8 @@ const char* ui_choose_file(const char* path)
     
     const char* result = NULL;
 
-    files = 0;
-    fileCount = odroid_sdcard_files_get(path, ".fw", &files);
+    char** files = NULL;
+    int fileCount = odroid_sdcard_files_get(path, ".fw", &files);
     printf("%s: fileCount=%d\n", __func__, fileCount);
     
     // Selection
@@ -1132,8 +1191,8 @@ const char* ui_choose_file(const char* path)
 
         int page = (currentItem / ITEM_COUNT) * ITEM_COUNT;
 
-
-        int btn = wait_for_button_press(10000);
+        // Wait for input but refresh display after 1000 ticks if no input
+        int btn = wait_for_button_press(1000);
 
         if (fileCount > 0)
         {
@@ -1261,11 +1320,10 @@ static int ui_choose_dialog(char options[], int optionCount, bool cancellable)
 
 static void ui_draw_app_page(int currentItem)
 {
-    printf("%s: HEAP=%#010x\n", __func__, esp_get_free_heap_size());
-
     int page = (currentItem / ITEM_COUNT) * ITEM_COUNT;
 
     ui_draw_title("ODROID-GO", "[MENU] Menu   |   [A] Boot App");
+    ui_draw_indicators(page / ITEM_COUNT + 1, (int)ceil((double)apps_count / ITEM_COUNT));
 
 	if (apps_count < 1)
 	{
@@ -1300,8 +1358,8 @@ void ui_choose_app()
 
         int page = (currentItem / ITEM_COUNT) * ITEM_COUNT;
 
-
-        int btn = wait_for_button_press(-1);
+        // Wait for input but refresh display after 1000 ticks if no input
+        int btn = wait_for_button_press(1000);
 
 		if (apps_count > 0)
 		{
@@ -1361,7 +1419,7 @@ void ui_choose_app()
 
             switch(choice) {
                 case 0:
-                    fileName = ui_choose_file(path);
+                    fileName = ui_choose_file(FIRMWARE_PATH);
                     if (fileName) {
                         printf("%s: fileName='%s'\n", __func__, fileName);
                         flash_firmware(fileName);
@@ -1405,7 +1463,11 @@ void app_main(void)
     gpio_set_direction(GPIO_NUM_2, GPIO_MODE_OUTPUT);
     gpio_set_level(GPIO_NUM_2, 1);
 
-    sdcardret = odroid_sdcard_open(SD_CARD); // before LCD
+    // Start battery monitor
+    xTaskCreate(&battery_task, "battery_task", 4096, NULL, 5, NULL);
+
+    // Has to be before LCD
+    sdcardret = odroid_sdcard_open(SD_CARD);
 
     ili9341_init();
     ili9341_clear(0xffff);
