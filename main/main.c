@@ -1025,10 +1025,38 @@ static void ui_draw_title(const char* TITLE, const char* FOOTER)
 }
 
 
+
+static void ui_draw_row(int line, char *line1, char* line2, uint16_t color, uint16_t *tile, bool selected)
+{
+    const int innerHeight = 240 - (16 * 2); // 208
+    const int itemHeight = innerHeight / ITEM_COUNT; // 52
+
+    const int rightWidth = (213); // 320 * (2.0 / 3.0)
+    const int leftWidth = 320 - rightWidth;
+
+    // Tile width = 86, height = 48 (16:9)
+    const short imageLeft = (leftWidth / 2) - (86 / 2);
+    const short textLeft = 320 - rightWidth;
+
+    short top = 16 + (line * itemHeight) - 1;
+    
+    UG_FontSelect(&FONT_8X12);
+
+    UG_SetBackcolor(selected ? C_YELLOW : C_WHITE);
+    UG_FillFrame(0, top + 2, 319, top + itemHeight - 1 - 1, UG_GetBackcolor());
+
+    ui_draw_image(imageLeft, top + 2, TILE_WIDTH, TILE_HEIGHT, tile);
+
+    UG_SetForecolor(C_BLACK);
+    UG_PutString(textLeft, top + 2 + 2 + 7, line1);
+
+    UG_SetForecolor(color);
+    UG_PutString(textLeft, top + 2 + 2 + 23, line2);
+}
+
+
 static void ui_draw_page(char** files, int fileCount, int currentItem)
 {
-    printf("%s: HEAP=%#010x\n", __func__, esp_get_free_heap_size());
-
     int page = (currentItem / ITEM_COUNT) * ITEM_COUNT;
     
     odroid_flash_block_t *blocks;
@@ -1041,96 +1069,60 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
     
     ui_draw_title("Select a file", tempstring);
 
-    const int innerHeight = 240 - (16 * 2); // 208
-    const int itemHeight = innerHeight / ITEM_COUNT; // 52
-
-    const int rightWidth = (213); // 320 * (2.0 / 3.0)
-    const int leftWidth = 320 - rightWidth;
-
-    // Tile width = 86, height = 48 (16:9)
-    const short imageLeft = (leftWidth / 2) - (86 / 2);
-    const short textLeft = 320 - rightWidth;
-
-
 	if (fileCount < 1)
 	{
         DisplayMessage("SD Card Empty");
+        return;
 	}
-	else
-	{
-	    for (int line = 0; line < ITEM_COUNT; ++line)
-	    {
-			if (page + line >= fileCount) break;
 
-            //uint16_t id = TXB_ID_0 + line;
-            short top = 16 + (line * itemHeight) - 1;
+    char line1[64], line2[64];
+    uint16_t color = C_GRAY;
 
-	        if ((page) + line == currentItem)
-	        {
-                UG_SetForecolor(C_BLACK);
-                UG_SetBackcolor(C_YELLOW);
-                UG_FillFrame(0, top + 2, 319, top + itemHeight - 1 - 1, C_YELLOW);
-	        }
-	        else
-	        {
-                UG_SetForecolor(C_BLACK);
-                UG_SetBackcolor(C_WHITE);
-                UG_FillFrame(0, top + 2, 319, top + itemHeight - 1 - 1, C_WHITE);
-	        }
+    for (int line = 0; line < ITEM_COUNT && (page + line) < fileCount; ++line)
+    {
+        char* fileName = files[page + line];
+        if (!fileName) abort();
 
-			char* fileName = files[page + line];
-			if (!fileName) abort();
+        sprintf(&tempstring, "%s/%s", path, fileName);
+        bool valid = firmware_get_info(tempstring, fwInfoBuffer);
 
-            sprintf(&tempstring, "%s/%s", path, fileName);
-            bool valid = firmware_get_info(tempstring, fwInfoBuffer);
+        strcpy(line1, fileName);
+        line1[strlen(fileName) - 3] = 0; // ".fw" = 3
 
-            ui_draw_image(imageLeft, top + 2, TILE_WIDTH, TILE_HEIGHT, fwInfoBuffer->fileHeader.tile);
+        if (valid) {
+            color = C_GRAY;
+            sprintf(&line2, "%.2f MB", (float)fwInfoBuffer->flashSize / 1024 / 1024);
+        } else {
+            color = C_RED;
+            sprintf(&line2, "Invalid firmware");
+        }
 
-            UG_FontSelect(&FONT_8X12);
-            strcpy(tempstring, fileName);
-            tempstring[strlen(fileName) - 3] = 0; // ".fw" = 3
-            UG_PutString(textLeft, top + 2 + 2 + 7, tempstring);
+        ui_draw_row(line, &line1, &line2, color, fwInfoBuffer->fileHeader.tile, (page + line) == currentItem);
+    }
 
-            if (valid) {
-                UG_SetForecolor(C_GRAY);
-                sprintf(&tempstring, "%.2f MB", (float)fwInfoBuffer->flashSize / 1024 / 1024);
-            } else {
-                UG_SetForecolor(C_RED);
-                sprintf(&tempstring, "Invalid firmware");
-            }
-            
-            UG_PutString(textLeft, top + 2 + 2 + 23, tempstring);
-	    }
-
-        UpdateDisplay();
-	}
+    UpdateDisplay();
 }
 
 const char* ui_choose_file(const char* path)
 {
     printf("%s: HEAP=%#010x\n", __func__, esp_get_free_heap_size());
 
+    // Check SD card
+    if (sdcardret != ESP_OK)
+    {
+        ui_draw_title("Error", "Error");
+        DisplayError("SD CARD ERROR");
+        vTaskDelay(200);
+        return NULL;
+        //indicate_error();
+    }
+    
     const char* result = NULL;
 
     files = 0;
     fileCount = odroid_sdcard_files_get(path, ".fw", &files);
     printf("%s: fileCount=%d\n", __func__, fileCount);
     
-    // Check SD card
-    if (sdcardret != ESP_OK)
-    {
-        DisplayError("SD CARD ERROR");
-        indicate_error();
-    }
-
-    // At least one firmware must be available
-    if (fileCount < 1)
-    {
-        DisplayError("NO FILES ERROR");
-        indicate_error();
-    }
-
-
     // Selection
     int currentItem = 0;
 
@@ -1141,41 +1133,45 @@ const char* ui_choose_file(const char* path)
         int page = (currentItem / ITEM_COUNT) * ITEM_COUNT;
 
 
-        int btn = wait_for_button_press(-1);
+        int btn = wait_for_button_press(10000);
 
-        if (btn == ODROID_INPUT_DOWN)
+        if (fileCount > 0)
         {
-            if (++currentItem >= fileCount) currentItem = 0;
-        }
-        else if(btn == ODROID_INPUT_UP)
-        {
-            if (--currentItem < 0) currentItem = fileCount - 1;
-        }
-        else if(btn == ODROID_INPUT_RIGHT)
-        {
-            if (page + ITEM_COUNT < fileCount) currentItem = page + ITEM_COUNT;
-            else currentItem = 0;
-        }
-        else if(btn == ODROID_INPUT_LEFT)
-        {
-            if (page - ITEM_COUNT >= 0) currentItem = page - ITEM_COUNT;
-            else currentItem = (fileCount - 1) / ITEM_COUNT * ITEM_COUNT;
-        }
-        else if(btn == ODROID_INPUT_A)
-        {
-            size_t fullPathLength = strlen(path) + 1 + strlen(files[currentItem]) + 1;
+            if (btn == ODROID_INPUT_DOWN)
+            {
+                if (++currentItem >= fileCount) currentItem = 0;
+            }
+            else if(btn == ODROID_INPUT_UP)
+            {
+                if (--currentItem < 0) currentItem = fileCount - 1;
+            }
+            else if(btn == ODROID_INPUT_RIGHT)
+            {
+                if (page + ITEM_COUNT < fileCount) currentItem = page + ITEM_COUNT;
+                else currentItem = 0;
+            }
+            else if(btn == ODROID_INPUT_LEFT)
+            {
+                if (page - ITEM_COUNT >= 0) currentItem = page - ITEM_COUNT;
+                else currentItem = (fileCount - 1) / ITEM_COUNT * ITEM_COUNT;
+            }
+            else if(btn == ODROID_INPUT_A)
+            {
+                size_t fullPathLength = strlen(path) + 1 + strlen(files[currentItem]) + 1;
 
-            char* fullPath = (char*)malloc(fullPathLength);
-            if (!fullPath) abort();
+                char* fullPath = (char*)malloc(fullPathLength);
+                if (!fullPath) abort();
 
-            strcpy(fullPath, path);
-            strcat(fullPath, "/");
-            strcat(fullPath, files[currentItem]);
+                strcpy(fullPath, path);
+                strcat(fullPath, "/");
+                strcat(fullPath, files[currentItem]);
 
-            result = fullPath;
-            break;
+                result = fullPath;
+                break;
+            }
         }
-        else if (btn == ODROID_INPUT_B)
+
+        if (btn == ODROID_INPUT_B)
         {
             break;
         }
@@ -1190,8 +1186,6 @@ const char* ui_choose_file(const char* path)
 
 static void ui_draw_dialog(char options[], int optionCount, int currentItem)
 {
-    printf("%s: HEAP=%#010x\n", __func__, esp_get_free_heap_size());
-
     int border = 3;
     int itemWidth = 190;
     int itemHeight = 20;
@@ -1273,54 +1267,19 @@ static void ui_draw_app_page(int currentItem)
 
     ui_draw_title("ODROID-GO", "[MENU] Menu   |   [A] Boot App");
 
-    const int innerHeight = 240 - (16 * 2); // 208
-    const int itemHeight = innerHeight / ITEM_COUNT; // 52
-
-    const int rightWidth = (213); // 320 * (2.0 / 3.0)
-    const int leftWidth = 320 - rightWidth;
-
-    // Tile width = 86, height = 48 (16:9)
-    const short imageLeft = (leftWidth / 2) - (86 / 2);
-    const short textLeft = 320 - rightWidth;
-
 	if (apps_count < 1)
 	{
         DisplayMessage("No apps have been flashed yet!");
+        return;
 	}
-	else
-	{
-        for (int line = 0; line < ITEM_COUNT; ++line)
-	    {
-            
-			if (page + line >= apps_count) break;
 
-            odroid_app_t *app = &apps[page + line];
-            
-            short top = 16 + (line * itemHeight) - 1;
+    for (int line = 0; line < ITEM_COUNT && (page + line) < apps_count; ++line)
+    {
+        odroid_app_t *app = &apps[page + line];
 
-	        if ((page) + line == currentItem)
-	        {
-                UG_SetForecolor(C_BLACK);
-                UG_SetBackcolor(C_YELLOW);
-                UG_FillFrame(0, top + 2, 319, top + itemHeight - 1 - 1, C_YELLOW);
-	        }
-	        else
-	        {
-                UG_SetForecolor(C_BLACK);
-                UG_SetBackcolor(C_WHITE);
-                UG_FillFrame(0, top + 2, 319, top + itemHeight - 1 - 1, C_WHITE);
-	        }
-
-            ui_draw_image(imageLeft, top + 2, TILE_WIDTH, TILE_HEIGHT, app->tile);
-
-            UG_FontSelect(&FONT_8X12);
-            UG_PutString(textLeft, top + 2 + 2 + 7, app->description);
-            //sprintf(&tempstring, "%.2f MB @ 0x%x", (float)(app->endOffset - app->startOffset) / 1024 / 1024, app->startOffset);
-            UG_SetForecolor(C_GRAY);
-            sprintf(&tempstring, "0x%x - 0x%x", app->startOffset, app->endOffset);
-            UG_PutString(textLeft, top + 2 + 2 + 23, tempstring);
-	    }
-	}
+        sprintf(&tempstring, "0x%x - 0x%x", app->startOffset, app->endOffset);
+        ui_draw_row(line, app->description, &tempstring, C_GRAY, app->tile, (page + line) == currentItem);
+    }
 
     UpdateDisplay();
 }
