@@ -36,6 +36,12 @@
 
 #define APP_MAGIC 0x1207
 
+#define APP_SORT_OFFSET 0x00
+#define APP_SORT_SEQUENCE 0x01
+#define APP_SORT_DESCRIPTION 0x02
+#define APP_SORT_DIR_ASC 0x00
+#define APP_SORT_DIR_DESC 0x10
+
 #define FLASH_BLOCK_SIZE (64 * 1024)
 #define ERASE_BLOCK_SIZE (4 * 1024)
 
@@ -122,6 +128,7 @@ static odroid_app_t* apps;
 static int apps_count = -1;
 static int apps_max = 4;
 static int nextInstallSeq = 0;
+static int displayOrder = 0;
 
 static esp_partition_info_t* partition_data;
 static int partition_count = -1;
@@ -313,11 +320,28 @@ void boot_application()
 }
 
 
-int sort_app_table(const void * a, const void * b)
+int sort_app_table_by_offset(const void * a, const void * b)
 {
   if ( (*(odroid_app_t*)a).startOffset < (*(odroid_app_t*)b).startOffset ) return -1;
   if ( (*(odroid_app_t*)a).startOffset > (*(odroid_app_t*)b).startOffset ) return 1;
   return 0;
+}
+
+int sort_app_table_by_sequence(const void * a, const void * b)
+{
+  if ( (*(odroid_app_t*)a).installSeq < (*(odroid_app_t*)b).installSeq ) return -1;
+  if ( (*(odroid_app_t*)a).installSeq > (*(odroid_app_t*)b).installSeq ) return 1;
+  return 0;
+}
+
+
+static void sort_app_table(int newMode)
+{
+    if (newMode == APP_SORT_OFFSET) {
+        qsort(apps, apps_count, sizeof(odroid_app_t), &sort_app_table_by_offset);
+    } else {
+        qsort(apps, apps_count, sizeof(odroid_app_t), &sort_app_table_by_sequence);
+    }
 }
 
 
@@ -386,7 +410,7 @@ static void write_app_table()
         memset(&apps[i], 0xff, sizeof(odroid_app_t));
     }
 
-    qsort(apps, apps_count, sizeof(odroid_app_t), &sort_app_table);
+    sort_app_table(APP_SORT_OFFSET);
 
     err = esp_partition_erase_range(app_table_part, 0, app_table_part->size);
     if (err != ESP_OK)
@@ -520,6 +544,8 @@ void defrag_flash()
     size_t totalBytesToMove = 0;
     size_t totalBytesMoved = 0;
 
+    sort_app_table(APP_SORT_OFFSET);
+
     // First loop to get total for the progress bar
     for (int i = 0; i < apps_count; i++)
     {
@@ -585,6 +611,8 @@ void find_free_blocks(odroid_flash_block_t **blocks, size_t *count, size_t *tota
     (*totalFreeSpace) = 0;
     (*count) = 0;
 
+    sort_app_table(APP_SORT_OFFSET);
+    
     for (int i = 0; i < apps_count; i++)
     {
         size_t free_space = apps[i].startOffset - previousBlockEnd;
@@ -1001,8 +1029,7 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
 {
     printf("%s: HEAP=%#010x\n", __func__, esp_get_free_heap_size());
 
-    int page = currentItem / ITEM_COUNT;
-    page *= ITEM_COUNT;
+    int page = (currentItem / ITEM_COUNT) * ITEM_COUNT;
     
     odroid_flash_block_t *blocks;
     size_t count, totalFreeSpace;
@@ -1059,10 +1086,6 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
 
             ui_draw_image(imageLeft, top + 2, TILE_WIDTH, TILE_HEIGHT, fwInfoBuffer->fileHeader.tile);
 
-            // Tile border
-            //UG_DrawFrame(imageLeft - 1, top + 1, imageLeft + TILE_WIDTH, top + 2 + TILE_HEIGHT, C_BLACK);
-
-	        //UG_TextboxSetText(&window1, id, displayStrings[line]);
             UG_FontSelect(&FONT_8X12);
             strcpy(tempstring, fileName);
             tempstring[strlen(fileName) - 3] = 0; // ".fw" = 3
@@ -1110,67 +1133,33 @@ const char* ui_choose_file(const char* path)
 
     // Selection
     int currentItem = 0;
-    ui_draw_page(files, fileCount, currentItem);
 
     while (true)
     {
-        int page = currentItem / ITEM_COUNT;
-        page *= ITEM_COUNT;
+        ui_draw_page(files, fileCount, currentItem);
+
+        int page = (currentItem / ITEM_COUNT) * ITEM_COUNT;
+
 
         int btn = wait_for_button_press(-1);
 
-        if(btn == ODROID_INPUT_DOWN)
+        if (btn == ODROID_INPUT_DOWN)
         {
-            if (currentItem + 1 < fileCount)
-            {
-                ++currentItem;
-            }
-            else
-            {
-                currentItem = 0;
-            }
-            ui_draw_page(files, fileCount, currentItem);
+            if (++currentItem >= fileCount) currentItem = 0;
         }
         else if(btn == ODROID_INPUT_UP)
         {
-            if (currentItem > 0)
-            {
-                --currentItem;
-            }
-            else
-            {
-                currentItem = fileCount - 1;
-            }
-            ui_draw_page(files, fileCount, currentItem);
+            if (--currentItem < 0) currentItem = fileCount - 1;
         }
         else if(btn == ODROID_INPUT_RIGHT)
         {
-            if (page + ITEM_COUNT < fileCount)
-            {
-                currentItem = page + ITEM_COUNT;
-            }
-            else
-            {
-                currentItem = 0;
-            }
-            ui_draw_page(files, fileCount, currentItem);
+            if (page + ITEM_COUNT < fileCount) currentItem = page + ITEM_COUNT;
+            else currentItem = 0;
         }
         else if(btn == ODROID_INPUT_LEFT)
         {
-            if (page - ITEM_COUNT >= 0)
-            {
-                currentItem = page - ITEM_COUNT;
-            }
-            else
-            {
-                currentItem = page;
-                while (currentItem + ITEM_COUNT < fileCount)
-                {
-                    currentItem += ITEM_COUNT;
-                }
-
-            }
-            ui_draw_page(files, fileCount, currentItem);
+            if (page - ITEM_COUNT >= 0) currentItem = page - ITEM_COUNT;
+            else currentItem = (fileCount - 1) / ITEM_COUNT * ITEM_COUNT;
         }
         else if(btn == ODROID_INPUT_A)
         {
@@ -1245,25 +1234,20 @@ static int ui_choose_dialog(char options[], int optionCount, bool cancellable)
     printf("%s: HEAP=%#010x\n", __func__, esp_get_free_heap_size());
 
     int currentItem = 0;
-    ui_draw_dialog(options, optionCount, currentItem);
 
     while (true)
     {
+        ui_draw_dialog(options, optionCount, currentItem);
+
 		int btn = wait_for_button_press(-1);
 
         if(btn == ODROID_INPUT_DOWN)
         {
-            if (currentItem + 1 < optionCount) ++currentItem;
-            else currentItem = 0;
-
-            ui_draw_dialog(options, optionCount, currentItem);
+            if (++currentItem >= optionCount) currentItem = 0;
         }
         else if(btn == ODROID_INPUT_UP)
         {
-            if (currentItem > 0) --currentItem;
-            else currentItem = optionCount - 1;
-
-            ui_draw_dialog(options, optionCount, currentItem);
+            if (--currentItem < 0) currentItem = optionCount - 1;
         }
         else if(btn == ODROID_INPUT_A)
         {
@@ -1285,8 +1269,7 @@ static void ui_draw_app_page(int currentItem)
 {
     printf("%s: HEAP=%#010x\n", __func__, esp_get_free_heap_size());
 
-    int page = currentItem / ITEM_COUNT;
-    page *= ITEM_COUNT;
+    int page = (currentItem / ITEM_COUNT) * ITEM_COUNT;
 
     ui_draw_title("ODROID-GO", "[MENU] Menu   |   [A] Boot App");
 
@@ -1306,7 +1289,7 @@ static void ui_draw_app_page(int currentItem)
 	}
 	else
 	{
-	    for (int line = 0; line < ITEM_COUNT; ++line)
+        for (int line = 0; line < ITEM_COUNT; ++line)
 	    {
             
 			if (page + line >= apps_count) break;
@@ -1346,73 +1329,42 @@ static void ui_draw_app_page(int currentItem)
 void ui_choose_app()
 {
     printf("%s: HEAP=%#010x\n", __func__, esp_get_free_heap_size());
-
+    
+    sort_app_table(displayOrder & 1);
+    
     // Selection
     int currentItem = 0;
-    ui_draw_app_page(currentItem);
 
     while (true)
     {
-        int btn = wait_for_button_press(100);
+        ui_draw_app_page(currentItem);
 
-        int page = currentItem / ITEM_COUNT;
-        page *= ITEM_COUNT;
+        int page = (currentItem / ITEM_COUNT) * ITEM_COUNT;
+
+
+        int btn = wait_for_button_press(-1);
 
 		if (apps_count > 0)
 		{
-	        if(btn == ODROID_INPUT_DOWN)
+	        if (btn == ODROID_INPUT_DOWN)
 	        {
-                if (currentItem + 1 < apps_count)
-                {
-                    ++currentItem;
-                }
-                else
-                {
-                    currentItem = 0;
-                }
-                ui_draw_app_page(currentItem);
+                if (++currentItem >= apps_count) currentItem = 0;
 	        }
-	        else if(btn == ODROID_INPUT_UP)
+	        else if (btn == ODROID_INPUT_UP)
 	        {
-                if (currentItem > 0)
-                {
-                    --currentItem;
-                }
-                else
-                {
-                    currentItem = apps_count - 1;
-                }
-                ui_draw_app_page(currentItem);
+                if (--currentItem < 0) currentItem = apps_count - 1;
 	        }
-	        else if(btn == ODROID_INPUT_RIGHT)
+	        else if (btn == ODROID_INPUT_RIGHT)
 	        {
-                if (page + ITEM_COUNT < apps_count)
-                {
-                    currentItem = page + ITEM_COUNT;
-                }
-                else
-                {
-                    currentItem = 0;
-                }
-                ui_draw_app_page(currentItem);
+                if (page + ITEM_COUNT < apps_count) currentItem = page + ITEM_COUNT;
+                else currentItem = 0;
 	        }
-	        else if(btn == ODROID_INPUT_LEFT)
+	        else if (btn == ODROID_INPUT_LEFT)
 	        {
-                if (page - ITEM_COUNT >= 0)
-                {
-                    currentItem = page - ITEM_COUNT;
-                }
-                else
-                {
-                    currentItem = page;
-                    while (currentItem + ITEM_COUNT < apps_count)
-                    {
-                        currentItem += ITEM_COUNT;
-                    }
-                }
-                ui_draw_app_page(currentItem);
+                if (page - ITEM_COUNT >= 0) currentItem = page - ITEM_COUNT;
+                else currentItem = (apps_count - 1) / ITEM_COUNT * ITEM_COUNT;
 	        }
-	        else if(btn == ODROID_INPUT_A)
+	        else if (btn == ODROID_INPUT_A)
 	        {
                 ui_draw_title("ODROID-GO", VERSION);
                 DisplayMessage("Updating partitions ...");
@@ -1431,8 +1383,7 @@ void ui_choose_app()
             }
             else if (btn == ODROID_INPUT_SELECT)
             {
-                defrag_flash();
-                ui_draw_app_page(currentItem);
+                sort_app_table(++displayOrder & 1);
             }
         }
 
@@ -1476,8 +1427,8 @@ void ui_choose_app()
                     cleanup_and_restart();
                     break;
             }
-
-            ui_draw_app_page(currentItem);
+            
+            sort_app_table(displayOrder & 1);
         }
     }
 }
