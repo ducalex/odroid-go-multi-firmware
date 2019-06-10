@@ -90,8 +90,7 @@ typedef struct
     odroid_partition_t parts[FIRMWARE_PARTS_MAX];
     uint8_t parts_count;
     uint8_t _reserved0;
-    uint8_t _reserved1;
-    uint8_t _reserved2;
+    uint16_t installSeq;
 } odroid_app_t; // __packed
 
 typedef struct
@@ -122,6 +121,7 @@ typedef struct
 static odroid_app_t* apps;
 static int apps_count = -1;
 static int apps_max = 4;
+static int nextInstallSeq = 0;
 
 static esp_partition_info_t* partition_data;
 static int partition_count = -1;
@@ -357,6 +357,9 @@ static void read_app_table()
     for (int i = 0; i < apps_max; i++) {
         if (apps[i].magic != APP_MAGIC) {
             break;
+        }
+        if (apps[i].installSeq > nextInstallSeq) {
+            nextInstallSeq = apps[i].installSeq + 1;
         }
         apps_count++;
     }
@@ -942,11 +945,10 @@ void flash_firmware(const char* fullPath)
     fclose(file);
 
     // 64K align our endOffset
-    currentFlashAddress = ALIGN_ADDRESS(currentFlashAddress, 0x10000);
-    app->endOffset = currentFlashAddress - 1;
+    app->endOffset = ALIGN_ADDRESS(currentFlashAddress, 0x10000) - 1;
 
-    // Write partition table
-    write_partition_table(app->parts, app->parts_count, app->startOffset);
+    // Remember the install order, for display sorting
+    app->installSeq = nextInstallSeq++;
 
     // Write app table
     apps_count++; // Everything went well, acknowledge the new app
@@ -964,6 +966,9 @@ void flash_firmware(const char* fullPath)
         if (btn == ODROID_INPUT_A) break;
         if (btn == ODROID_INPUT_B) return;
     }
+
+    // Write partition table
+    write_partition_table(app->parts, app->parts_count, app->startOffset);
 
     // boot firmware
     boot_application();
