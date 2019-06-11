@@ -1463,9 +1463,6 @@ void app_main(void)
     gpio_set_direction(GPIO_NUM_2, GPIO_MODE_OUTPUT);
     gpio_set_level(GPIO_NUM_2, 1);
 
-    // Start battery monitor
-    xTaskCreate(&battery_task, "battery_task", 4096, NULL, 5, NULL);
-
     // Has to be before LCD
     sdcardret = odroid_sdcard_open(SD_CARD);
 
@@ -1474,9 +1471,12 @@ void app_main(void)
 
     UG_Init(&gui, pset, 320, 240);
 
+    // Start battery monitor
+    xTaskCreate(&battery_task, "battery_task", 4096, NULL, 5, NULL);
+
     fwInfoBuffer = malloc(sizeof(odroid_fw_t));
     dataBuffer = malloc(FLASH_BLOCK_SIZE);
-    
+
     // If we can't allocate our basic buffers we might as well give up now
     if (!fwInfoBuffer || !dataBuffer)
     {
