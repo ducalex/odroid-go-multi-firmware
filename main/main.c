@@ -194,7 +194,7 @@ static void battery_task(void *arg)
 }
 
 
-static void ui_draw_title(const char*, const char*);
+static void ui_draw_title(char*, char*);
 
 
 void indicate_error()
@@ -238,7 +238,7 @@ static void UpdateDisplay()
     ui_update_display();
 }
 
-static void DisplayError(const char* message)
+static void DisplayError(char* message)
 {
     UG_FontSelect(&FONT_8X12);
     short left = (320 / 2) - (strlen(message) * 9 / 2);
@@ -251,7 +251,7 @@ static void DisplayError(const char* message)
     UpdateDisplay();
 }
 
-static void DisplayMessage(const char* message)
+static void DisplayMessage(char* message)
 {
     UG_FontSelect(&FONT_8X12);
     short left = (320 / 2) - (strlen(message) * 9 / 2);
@@ -285,7 +285,7 @@ static void DisplayProgress(int percent)
     //UpdateDisplay();
 }
 
-static void DisplayFooter(const char* message)
+static void DisplayFooter(char* message)
 {
     UG_FontSelect(&FONT_8X12);
     short left = (320 / 2) - (strlen(message) * 9 / 2);
@@ -298,7 +298,7 @@ static void DisplayFooter(const char* message)
     UpdateDisplay();
 }
 
-static void DisplayHeader(const char* message)
+static void DisplayHeader(char* message)
 {
     UG_FontSelect(&FONT_8X12);
     short left = (320 / 2) - (strlen(message) * 9 / 2);
@@ -332,7 +332,7 @@ void cleanup_and_restart()
     // clear and deinit display
     ili9341_clear(0x0000);
     ili9341_deinit();
-    
+
     // Close SD card
     odroid_sdcard_close();
 
@@ -359,7 +359,7 @@ void boot_application()
         DisplayError("BOOT SET ERROR");
         indicate_error();
     }
-    
+
     cleanup_and_restart();
 }
 
@@ -392,10 +392,11 @@ static void sort_app_table(int newMode)
 static void read_app_table()
 {
     esp_err_t err;
-    
+
     apps_count = 0;
-    
-    esp_partition_t *app_table_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, PART_SUBTYPE_FACTORY_DATA, NULL);
+
+    const esp_partition_t *app_table_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+                                                                     PART_SUBTYPE_FACTORY_DATA, NULL);
 
     if (!app_table_part) {
         abort();
@@ -443,12 +444,13 @@ static void write_app_table()
 {
     esp_err_t err;
 
-    esp_partition_t *app_table_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, PART_SUBTYPE_FACTORY_DATA, NULL);
+    const esp_partition_t *app_table_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+                                                                     PART_SUBTYPE_FACTORY_DATA, NULL);
 
     if (!app_table_part || !apps) {
         read_app_table();
     }
-    
+
     for (int i = apps_count; i < apps_max; ++i)
     {
         memset(&apps[i], 0xff, sizeof(odroid_app_t));
@@ -479,10 +481,10 @@ static void read_partition_table()
     esp_err_t err;
 
     partition_count = 0;
-    
+
     if (!partition_data)
     {
-        partition_data = (const esp_partition_info_t*)malloc(ESP_PARTITION_TABLE_MAX_LEN);
+        partition_data = (esp_partition_info_t*)malloc(ESP_PARTITION_TABLE_MAX_LEN);
     }
 
     // Read table
@@ -601,7 +603,7 @@ void defrag_flash()
         }
     }
 
-    sprintf(&tempstring, "Moving: %.2f MB", (float)totalBytesToMove / 1024 / 1024);
+    sprintf(tempstring, "Moving: %.2f MB", (float)totalBytesToMove / 1024 / 1024);
     ui_draw_title("Defragmenting flash", tempstring);
     DisplayHeader("Making some space...");
 
@@ -626,7 +628,7 @@ void defrag_flash()
 
                 DisplayMessage("Defragmenting ... (W)");
                 spi_flash_write(newOffset + i, dataBuffer, FLASH_BLOCK_SIZE);
-                
+
                 totalBytesMoved += FLASH_BLOCK_SIZE;
 
                 DisplayProgress((float) totalBytesMoved / totalBytesToMove  * 100.0);
@@ -780,9 +782,9 @@ firmware_get_info_err:
 
 void flash_utility()
 {
-    // Code to flash utility.bin. 
+    // Code to flash utility.bin.
     // Because leaving it in flash_firmware results in multiple copies being flashed.
-    FILE* util = fopen("/sd/odroid/utility.bin", "rb");
+    //FILE* util = fopen("/sd/odroid/utility.bin", "rb");
     //util_part.type = ESP_PARTITION_TYPE_APP;
     //util_part.subtype = ESP_PARTITION_SUBTYPE_APP_TEST;
 }
@@ -827,10 +829,10 @@ void flash_firmware(const char* fullPath)
     strncpy(app->description, fw->fileHeader.description, FIRMWARE_DESCRIPTION_SIZE-1);
     strncpy(app->filename, strrchr(fullPath, '/'), FIRMWARE_DESCRIPTION_SIZE-1);
     memcpy(app->tile, fw->fileHeader.tile, FIRMWARE_TILE_SIZE * 2);
-    
+
     printf("FirmwareDescription='%s'\n", app->description);
 
-    sprintf(&tempstring, "Destination: 0x%x", currentFlashAddress);
+    sprintf(tempstring, "Destination: 0x%x", currentFlashAddress);
     ui_draw_title("Install Application", tempstring);
     DisplayHeader(app->description);
     DisplayTile(app->tile);
@@ -1047,7 +1049,7 @@ void flash_firmware(const char* fullPath)
 }
 
 
-static void ui_draw_title(const char* TITLE, const char* FOOTER)
+static void ui_draw_title(char* TITLE, char* FOOTER)
 {
     UG_FillFrame(0, 0, 319, 239, C_WHITE);
 
@@ -1075,11 +1077,11 @@ static void ui_draw_indicators(int page, int totalPages)
     UG_SetForecolor(0x8C51);
 
     // Page indicator
-    sprintf(&tempstring, "%d/%d", page, totalPages);
+    sprintf(tempstring, "%d/%d", page, totalPages);
     UG_PutString(4, 4, tempstring);
 
     // Battery indicator
-    sprintf(&tempstring, "%d%%", batteryPercent);
+    sprintf(tempstring, "%d%%", batteryPercent);
     UG_PutString(320 - (9 * strlen(tempstring)) - 4, 4, tempstring);
 }
 
@@ -1122,9 +1124,9 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
 
     find_free_blocks(&blocks, &count, &totalFreeSpace);
     free(blocks);
-    
-    sprintf(&tempstring, "Free space: %.2fMB (%d block)", (double)totalFreeSpace / 1024 / 1024, count);
-    
+
+    sprintf(tempstring, "Free space: %.2fMB (%d block)", (double)totalFreeSpace / 1024 / 1024, count);
+
     ui_draw_title("Select a file", tempstring);
     ui_draw_indicators(page / ITEM_COUNT + 1, (int)ceil((double)fileCount / ITEM_COUNT));
 
@@ -1142,7 +1144,7 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
         char* fileName = files[page + line];
         if (!fileName) abort();
 
-        sprintf(&tempstring, "%s/%s", FIRMWARE_PATH, fileName);
+        sprintf(tempstring, "%s/%s", FIRMWARE_PATH, fileName);
         bool valid = firmware_get_info(tempstring, fwInfoBuffer);
 
         strcpy(line1, fileName);
@@ -1150,19 +1152,20 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
 
         if (valid) {
             color = C_GRAY;
-            sprintf(&line2, "%.2f MB", (float)fwInfoBuffer->flashSize / 1024 / 1024);
+            sprintf(line2, "%.2f MB", (float)fwInfoBuffer->flashSize / 1024 / 1024);
         } else {
             color = C_RED;
-            sprintf(&line2, "Invalid firmware");
+            sprintf(line2, "Invalid firmware");
         }
 
-        ui_draw_row(line, &line1, &line2, color, fwInfoBuffer->fileHeader.tile, (page + line) == currentItem);
+        ui_draw_row(line, line1, line2, color,
+                        fwInfoBuffer->fileHeader.tile, (page + line) == currentItem);
     }
 
     UpdateDisplay();
 }
 
-const char* ui_choose_file(const char* path)
+char* ui_choose_file(const char* path)
 {
     printf("%s: HEAP=%#010x\n", __func__, esp_get_free_heap_size());
 
@@ -1175,13 +1178,13 @@ const char* ui_choose_file(const char* path)
         return NULL;
         //indicate_error();
     }
-    
-    const char* result = NULL;
+
+    char* result = NULL;
 
     char** files = NULL;
     int fileCount = odroid_sdcard_files_get(path, ".fw", &files);
     printf("%s: fileCount=%d\n", __func__, fileCount);
-    
+
     // Selection
     int currentItem = 0;
 
@@ -1335,8 +1338,8 @@ static void ui_draw_app_page(int currentItem)
     {
         odroid_app_t *app = &apps[page + line];
 
-        sprintf(&tempstring, "0x%x - 0x%x", app->startOffset, app->endOffset);
-        ui_draw_row(line, app->description, &tempstring, C_GRAY, app->tile, (page + line) == currentItem);
+        sprintf(tempstring, "0x%x - 0x%x", app->startOffset, app->endOffset);
+        ui_draw_row(line, app->description, (char*)tempstring, C_GRAY, app->tile, (page + line) == currentItem);
     }
 
     UpdateDisplay();
