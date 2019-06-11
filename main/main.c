@@ -1000,7 +1000,7 @@ void flash_firmware(const char* fullPath)
             // TODO: verify
 
         }
-        
+
         // Notify OK
         printf("OK: [%d] Length=%#08x\n", app->parts_count, length);
 
@@ -1033,7 +1033,7 @@ void flash_firmware(const char* fullPath)
 
     DisplayMessage("Ready !");
     DisplayFooter("[B] Go Back   |   [A] Boot");
-    
+
     while (1) {
         int btn = wait_for_button_press(-1);
 
@@ -1118,7 +1118,7 @@ static void ui_draw_row(int line, char *line1, char* line2, uint16_t color, uint
 static void ui_draw_page(char** files, int fileCount, int currentItem)
 {
     int page = (currentItem / ITEM_COUNT) * ITEM_COUNT;
-    
+
     odroid_flash_block_t *blocks;
     size_t count, totalFreeSpace;
 
@@ -1203,21 +1203,21 @@ char* ui_choose_file(const char* path)
             {
                 if (++currentItem >= fileCount) currentItem = 0;
             }
-            else if(btn == ODROID_INPUT_UP)
+            else if (btn == ODROID_INPUT_UP)
             {
                 if (--currentItem < 0) currentItem = fileCount - 1;
             }
-            else if(btn == ODROID_INPUT_RIGHT)
+            else if (btn == ODROID_INPUT_RIGHT)
             {
                 if (page + ITEM_COUNT < fileCount) currentItem = page + ITEM_COUNT;
                 else currentItem = 0;
             }
-            else if(btn == ODROID_INPUT_LEFT)
+            else if (btn == ODROID_INPUT_LEFT)
             {
                 if (page - ITEM_COUNT >= 0) currentItem = page - ITEM_COUNT;
                 else currentItem = (fileCount - 1) / ITEM_COUNT * ITEM_COUNT;
             }
-            else if(btn == ODROID_INPUT_A)
+            else if (btn == ODROID_INPUT_A)
             {
                 size_t fullPathLength = strlen(path) + 1 + strlen(files[currentItem]) + 1;
 
@@ -1297,26 +1297,24 @@ static int ui_choose_dialog(char options[], int optionCount, bool cancellable)
 
 		int btn = wait_for_button_press(-1);
 
-        if(btn == ODROID_INPUT_DOWN)
+        if (btn == ODROID_INPUT_DOWN)
         {
             if (++currentItem >= optionCount) currentItem = 0;
         }
-        else if(btn == ODROID_INPUT_UP)
+        else if (btn == ODROID_INPUT_UP)
         {
             if (--currentItem < 0) currentItem = optionCount - 1;
         }
-        else if(btn == ODROID_INPUT_A)
+        else if (btn == ODROID_INPUT_A)
         {
             return currentItem;
         }
-        else if(btn == ODROID_INPUT_B)
+        else if (btn == ODROID_INPUT_B)
         {
-            if (cancellable) {
-                return -1;
-            }
+            if (cancellable) return -1;
         }
     }
-    
+
     return currentItem;
 }
 
@@ -1366,7 +1364,7 @@ void ui_choose_app()
 
 		if (apps_count > 0)
 		{
-	        if (btn == ODROID_INPUT_DOWN)
+            if (btn == ODROID_INPUT_DOWN)
 	        {
                 if (++currentItem >= apps_count) currentItem = 0;
 	        }
