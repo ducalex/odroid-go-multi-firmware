@@ -5,6 +5,7 @@
 #include "esp_event.h"
 #include "esp_event_loop.h"
 #include "nvs_flash.h"
+#include "nvs.h"
 #include "driver/gpio.h"
 #include "driver/adc.h"
 #include "esp_adc_cal.h"
@@ -15,6 +16,7 @@
 #include "rom/crc.h"
 
 #include <string.h>
+#include <strings.h>
 #include <stdlib.h>
 #include <math.h>
 
@@ -33,19 +35,19 @@
 #define PART_SUBTYPE_FACTORY 0x00
 #define PART_SUBTYPE_FACTORY_DATA 0xFE
 
-#define FLASH_SIZE (16 * 1024 * 1024)
-
 #define TILE_WIDTH (86)
 #define TILE_HEIGHT (48)
 
 #define APP_MAGIC 0x1207
 
-#define APP_SORT_OFFSET 0x00
-#define APP_SORT_SEQUENCE 0x01
-#define APP_SORT_DESCRIPTION 0x02
-#define APP_SORT_DIR_ASC 0x00
-#define APP_SORT_DIR_DESC 0x10
+#define APP_SORT_OFFSET      0b0000
+#define APP_SORT_SEQUENCE    0b0010
+#define APP_SORT_DESCRIPTION 0b0100
+#define APP_SORT_MAX         0b0101
+#define APP_SORT_DIR_ASC     0b0000
+#define APP_SORT_DIR_DESC    0b0001
 
+#define FLASH_SIZE (16 * 1024 * 1024)
 #define FLASH_BLOCK_SIZE (64 * 1024)
 #define ERASE_BLOCK_SIZE (4 * 1024)
 
@@ -154,6 +156,8 @@ static UG_GUI gui;
 static char tempstring[512];
 
 static esp_err_t sdcardret;
+
+static nvs_handle nvs_h;
 
 static int batteryPercent = 0;
 
@@ -336,6 +340,10 @@ void cleanup_and_restart()
     // Close SD card
     odroid_sdcard_close();
 
+    // Close NVS
+    nvs_close(nvs_h);
+    nvs_flash_deinit();
+
     esp_restart();
 }
 
@@ -364,27 +372,50 @@ void boot_application()
 }
 
 
-int sort_app_table_by_offset(const void * a, const void * b)
+static int sort_app_table_by_offset(const void * a, const void * b)
 {
-  if ( (*(odroid_app_t*)a).startOffset < (*(odroid_app_t*)b).startOffset ) return -1;
-  if ( (*(odroid_app_t*)a).startOffset > (*(odroid_app_t*)b).startOffset ) return 1;
-  return 0;
+    if ( (*(odroid_app_t*)a).startOffset < (*(odroid_app_t*)b).startOffset ) return -1;
+    if ( (*(odroid_app_t*)a).startOffset > (*(odroid_app_t*)b).startOffset ) return 1;
+    return 0;
 }
 
-int sort_app_table_by_sequence(const void * a, const void * b)
+static int sort_app_table_by_sequence(const void * a, const void * b)
 {
-  if ( (*(odroid_app_t*)a).installSeq < (*(odroid_app_t*)b).installSeq ) return -1;
-  if ( (*(odroid_app_t*)a).installSeq > (*(odroid_app_t*)b).installSeq ) return 1;
-  return 0;
+    return (*(odroid_app_t*)a).installSeq - (*(odroid_app_t*)b).installSeq;
 }
 
+static int sort_app_table_by_alphabet(const void * a, const void * b)
+{
+    return strcasecmp((*(odroid_app_t*)a).description, (*(odroid_app_t*)b).description);
+}
 
 static void sort_app_table(int newMode)
 {
-    if (newMode == APP_SORT_OFFSET) {
-        qsort(apps, apps_count, sizeof(odroid_app_t), &sort_app_table_by_offset);
-    } else {
-        qsort(apps, apps_count, sizeof(odroid_app_t), &sort_app_table_by_sequence);
+    switch(newMode & ~1) {
+        case APP_SORT_SEQUENCE:
+            qsort(apps, apps_count, sizeof(odroid_app_t), &sort_app_table_by_sequence);
+            break;
+        case APP_SORT_DESCRIPTION:
+            qsort(apps, apps_count, sizeof(odroid_app_t), &sort_app_table_by_alphabet);
+            break;
+        case APP_SORT_OFFSET:
+        default:
+            qsort(apps, apps_count, sizeof(odroid_app_t), &sort_app_table_by_offset);
+            break;
+    }
+
+    if (newMode & 1) { // Reverse array. Very inefficient.
+        odroid_app_t *tmp = malloc(sizeof(odroid_app_t));
+        int i = apps_count - 1, j = 0;
+        while (i > j)
+        {
+            memcpy(tmp, &apps[i], sizeof(odroid_app_t));
+            memcpy(&apps[i], &apps[j], sizeof(odroid_app_t));
+            memcpy(&apps[j], tmp, sizeof(odroid_app_t));
+            i--;
+            j++;
+        }
+        free(tmp);
     }
 }
 
@@ -405,7 +436,7 @@ static void read_app_table()
     startFlashAddress = app_table_part->address + app_table_part->size;
 
     apps_max = (app_table_part->size / sizeof(odroid_app_t));
-    
+
     printf("Max apps: %d\n", apps_max);
     if (!apps) {
         apps = malloc(app_table_part->size);
@@ -422,12 +453,12 @@ static void read_app_table()
         DisplayError("APP TABLE READ ERROR");
         indicate_error();
     }
-    
+
     for (int i = 0; i < apps_max; i++) {
         if (apps[i].magic != APP_MAGIC) {
             break;
         }
-        if (apps[i].installSeq > nextInstallSeq) {
+        if (apps[i].installSeq >= nextInstallSeq) {
             nextInstallSeq = apps[i].installSeq + 1;
         }
         apps_count++;
@@ -435,7 +466,7 @@ static void read_app_table()
 
     //64K align the address (https://docs.espressif.com/projects/esp-idf/en/latest/api-guides/partition-tables.html#offset-size)
     startFlashAddress = ALIGN_ADDRESS(startFlashAddress, 0x10000);
-    
+
     printf("App count: %d\n", apps_count);
 }
 
@@ -1258,10 +1289,10 @@ static void ui_draw_dialog(char options[], int optionCount, int currentItem)
 
     UG_FillFrame(left, top, left + width, top + height, C_BLUE);
     UG_FillFrame(left + border, top + border, left + width - border, top + height - border, C_WHITE);
-    
+
     top += border;
     left += border;
-    
+
     for (int i = 0; i < optionCount; i++) {
         int fg = (i == currentItem) ? C_WHITE : C_BLACK;
         int bg = (i == currentItem) ? C_BLUE : C_WHITE;
@@ -1347,9 +1378,11 @@ static void ui_draw_app_page(int currentItem)
 void ui_choose_app()
 {
     printf("%s: HEAP=%#010x\n", __func__, esp_get_free_heap_size());
-    
-    sort_app_table(displayOrder & 1);
-    
+
+    nvs_get_i32(nvs_h, "display_order", &displayOrder);
+
+    sort_app_table(displayOrder);
+
     // Selection
     int currentItem = 0;
 
@@ -1393,33 +1426,48 @@ void ui_choose_app()
                 DisplayMessage("Setting boot partition ...");
                 boot_application();
 	        }
-            else if (btn == ODROID_INPUT_VOLUME)
-            {
-                ui_draw_title("ODROID-GO", VERSION);
-                DisplayMessage("Setting boot partition ...");
-                boot_application();
-            }
             else if (btn == ODROID_INPUT_SELECT)
             {
-                sort_app_table(++displayOrder & 1);
+                do {
+                    if ((++displayOrder) > APP_SORT_MAX)
+                        displayOrder = (displayOrder & 1);
+
+                    sort_app_table(displayOrder);
+                    ui_draw_app_page(currentItem);
+
+                    char descriptions[][16] = {"OFFSET", "INSTALL ORDER", "DESCRIPTION"};
+                    char order[][5] = {"ASC", "DESC"};
+                    sprintf(tempstring, "NOW SORTING BY %s %s", descriptions[(displayOrder >> 1)], order[displayOrder & 1]);
+
+                    UG_FontSelect(&FONT_8X8);
+                    UG_SetBackcolor(C_MIDNIGHT_BLUE);
+                    UG_SetForecolor(C_WHITE);
+                    UG_FillFrame(0, 239 - 16, 319, 239, C_MIDNIGHT_BLUE);
+                    UG_PutString((320 / 2) - (strlen(tempstring) * 9 / 2), 240 - 4 - 8, tempstring);
+                    UpdateDisplay();
+                }
+                while (wait_for_button_press(200) == ODROID_INPUT_SELECT);
+
+                nvs_set_i32(nvs_h, "display_order", displayOrder);
+                nvs_commit(nvs_h);
             }
         }
 
         if (btn == ODROID_INPUT_MENU)
         {
-            const char options[5][32] = {
-                "Install from SD Card", 
+            const char options[][32] = {
+                "Install from SD Card",
                 "Erase selected app",
-                "Erase all apps",
-                "Erase NVM",
+              //  "Erase NVS",
+                "Factory reset",
                 "Restart System"
             };
-            
-            int choice = ui_choose_dialog(options, 5, true);
+
+            int choice = ui_choose_dialog(options, 4, true);
             char* fileName;
 
             switch(choice) {
-                case 0:
+                case 0: // Install from SD Card
                     fileName = ui_choose_file(FIRMWARE_PATH);
                     if (fileName) {
                         printf("%s: fileName='%s'\n", __func__, fileName);
@@ -1427,26 +1475,31 @@ void ui_choose_app()
                         free(fileName);
                     }
                     break;
-                case 1:
-                    memmove(&apps[currentItem], &apps[currentItem + 1], 
+                case 1: // Remove selected app
+                    memmove(&apps[currentItem], &apps[currentItem + 1],
                             (apps_max - currentItem) * sizeof(odroid_app_t));
                     apps_count--;
                     write_app_table();
                     break;
-                case 2:
+               // case 2: // Erase NVS
+               //     nvs_flash_erase();
+               //     cleanup_and_restart();
+               //     break;
+                case 2: // Factory reset
                     memset(apps, 0xFF, apps_max * sizeof(odroid_app_t));
                     write_app_table();
-                    read_app_table();
-                    break;
-                case 3:
+                    write_partition_table(NULL, 0, 0);
                     nvs_flash_erase();
+                    cleanup_and_restart();
                     break;
-                case 4:
+                case 3: // Restart
+                    esp_ota_set_boot_partition(esp_partition_find_first(ESP_PARTITION_TYPE_APP,
+                        ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL)); // Restore OTA data if possible and reboot
                     cleanup_and_restart();
                     break;
             }
-            
-            sort_app_table(displayOrder & 1);
+
+            sort_app_table(displayOrder);
         }
     }
 }
@@ -1456,8 +1509,11 @@ void app_main(void)
 {
     printf("odroid-go-firmware (Ver: %s). HEAP=%#010x\n", VERSION, esp_get_free_heap_size());
 
+    // Init NVS. We don't care about errors because we can work without it
     nvs_flash_init();
+    nvs_open("_firmware_", NVS_READWRITE, &nvs_h);
 
+    // Init gamepad
     input_init();
 
     // turn LED on
