@@ -1458,12 +1458,12 @@ void ui_choose_app()
             const char options[][32] = {
                 "Install from SD Card",
                 "Erase selected app",
-              //  "Erase NVS",
-                "Factory reset",
+                "Erase all apps",
+                "Erase NVS",
                 "Restart System"
             };
 
-            int choice = ui_choose_dialog(options, 4, true);
+            int choice = ui_choose_dialog(options, 5, true);
             char* fileName;
 
             switch(choice) {
@@ -1481,18 +1481,16 @@ void ui_choose_app()
                     apps_count--;
                     write_app_table();
                     break;
-               // case 2: // Erase NVS
-               //     nvs_flash_erase();
-               //     cleanup_and_restart();
-               //     break;
-                case 2: // Factory reset
+                case 2: // Erase all apps
                     memset(apps, 0xFF, apps_max * sizeof(odroid_app_t));
+                    apps_count = 0;
                     write_app_table();
                     write_partition_table(NULL, 0, 0);
-                    nvs_flash_erase();
-                    cleanup_and_restart();
                     break;
-                case 3: // Restart
+                case 3: // Erase NVS
+                    nvs_flash_erase();
+                    break;
+                case 4: // Restart
                     esp_ota_set_boot_partition(esp_partition_find_first(ESP_PARTITION_TYPE_APP,
                         ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL)); // Restore OTA data if possible and reboot
                     cleanup_and_restart();
@@ -1511,7 +1509,7 @@ void app_main(void)
 
     // Init NVS. We don't care about errors because we can work without it
     nvs_flash_init();
-    nvs_open("_firmware_", NVS_READWRITE, &nvs_h);
+    nvs_open("firmware", NVS_READWRITE, &nvs_h);
 
     // Init gamepad
     input_init();
