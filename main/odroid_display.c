@@ -42,9 +42,7 @@ static TaskHandle_t xTaskToNotify = NULL;
 //static bool useCallbacks = false;
 
 
-#define LINE_COUNT (6)
-//uint16_t* line[2]; //[320 * LINE_COUNT]; // Must be at least 320
-static uint16_t line[2][320 * LINE_COUNT]; // Must be at least 320
+static uint16_t line[2][320]; // Must be at least 320
 
 const int DUTY_MAX = 0x1fff;
 
@@ -70,7 +68,7 @@ static const ili_init_cmd_t ili_sleep_cmds[] = {
 
 
 // 2.4" LCD
-static const ili_init_cmd_t ili_init_cmds[] = {
+DMA_ATTR static const ili_init_cmd_t ili_init_cmds[] = {
     // VCI=2.8V
     //************* Start Initial Sequence **********//
     {TFT_CMD_SWRESET, {0}, 0x80},
