@@ -7,7 +7,7 @@
 #include "driver/sdspi_host.h"
 #include "sdmmc_cmd.h"
 #include "esp_heap_caps.h"
-#include "esp_spiffs.h"
+#include "esp_log.h"
 
 #include <dirent.h>
 #include <string.h>
@@ -97,8 +97,7 @@ int odroid_sdcard_files_get(const char* path, const char* extension, char*** fil
     DIR *dir = opendir(path);
     if( dir == NULL )
     {
-        printf("opendir failed.\n");
-        //abort();
+        ESP_LOGE(__func__, "opendir failed.");
         return 0;
     }
 
@@ -136,7 +135,6 @@ int odroid_sdcard_files_get(const char* path, const char* extension, char*** fil
                 if (strcmp(temp, extension) == 0)
                 {
                     result[count] = (char*)malloc(len + 1);
-                    //printf("%s: allocated %p\n", __func__, result[count]);
 
                     if (!result[count])
                     {
@@ -165,11 +163,9 @@ void odroid_sdcard_files_free(char** files, int count)
 {
     for (int i = 0; i < count; ++i)
     {
-        //printf("%s: freeing item %p\n", __func__, files[i]);
         free(files[i]);
     }
 
-    //printf("%s: freeing array %p\n", __func__, files);
     free(files);
 }
 
@@ -179,7 +175,7 @@ esp_err_t odroid_sdcard_open(const char* base_path)
 
     if (isOpen)
     {
-        printf("odroid_sdcard_open: alread open.\n");
+        ESP_LOGE(__func__, "already open.");
         ret = ESP_FAIL;
     }
     else
@@ -220,7 +216,7 @@ esp_err_t odroid_sdcard_open(const char* base_path)
         }
         else
         {
-            printf("odroid_sdcard_open: esp_vfs_fat_sdmmc_mount failed (%d)\n", ret);
+            ESP_LOGE(__func__, "esp_vfs_fat_sdmmc_mount failed (%d)", ret);
         }
     }
 
@@ -234,7 +230,7 @@ esp_err_t odroid_sdcard_close()
 
     if (!isOpen)
     {
-        printf("odroid_sdcard_close: not open.\n");
+        ESP_LOGE(__func__, "not open.");
         ret = ESP_FAIL;
     }
     else
@@ -243,7 +239,7 @@ esp_err_t odroid_sdcard_close()
 
         if (ret != ESP_OK)
         {
-            printf("odroid_sdcard_close: esp_vfs_fat_sdmmc_unmount failed (%d)\n", ret);
+            ESP_LOGE(__func__, "esp_vfs_fat_sdmmc_unmount failed (%d)", ret);
     	}
     }
 
@@ -257,14 +253,14 @@ size_t odroid_sdcard_get_filesize(const char* path)
 
     if (!isOpen)
     {
-        printf("odroid_sdcard_get_filesize: not open.\n");
+        ESP_LOGE(__func__, "not open.");
     }
     else
     {
         FILE* f = fopen(path, "rb");
         if (f == NULL)
         {
-            printf("odroid_sdcard_get_filesize: fopen failed.\n");
+            ESP_LOGE(__func__, "fopen failed.");
         }
         else
         {
@@ -284,20 +280,20 @@ size_t odroid_sdcard_copy_file_to_memory(const char* path, void* ptr)
 
     if (!isOpen)
     {
-        printf("odroid_sdcard_copy_file_to_memory: not open.\n");
+        ESP_LOGE(__func__, "not open.");
     }
     else
     {
         if (!ptr)
         {
-            printf("odroid_sdcard_copy_file_to_memory: ptr is null.\n");
+            ESP_LOGE(__func__, "ptr is null.");
         }
         else
         {
             FILE* f = fopen(path, "rb");
             if (f == NULL)
             {
-                printf("odroid_sdcard_copy_file_to_memory: fopen failed.\n");
+                ESP_LOGE(__func__, "fopen failed.");
             }
             else
             {

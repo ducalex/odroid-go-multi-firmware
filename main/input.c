@@ -5,6 +5,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "esp_log.h"
 
 
 static volatile bool input_task_is_running = false;
@@ -107,7 +108,7 @@ uint16_t wait_for_button_press(int ticks)
         if (ticks > 0 && timeout < xTaskGetTickCount()) {
             break;
         }
-        
+
         previousState = state;
         vTaskDelay(10 / portTICK_PERIOD_MS);
     }
@@ -184,7 +185,7 @@ void input_init()
 
     if(xSemaphore == NULL)
     {
-        printf("xSemaphoreCreateMutex failed.\n");
+        ESP_LOGE(__func__, "xSemaphoreCreateMutex failed.");
         abort();
     }
 
@@ -213,5 +214,5 @@ void input_init()
     // Start background polling
     xTaskCreatePinnedToCore(&input_task, "input_task", 1024 * 2, NULL, 5, NULL, 1);
 
-  	printf("%s: done.\n", __func__);
+  	ESP_LOGI(__func__, "done.");
 }

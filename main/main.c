@@ -13,6 +13,7 @@
 #include "esp_ota_ops.h"
 #include "esp_heap_caps.h"
 #include "esp_flash_data_types.h"
+#include "esp_log.h"
 #include "rom/crc.h"
 
 #include <string.h>
@@ -350,7 +351,7 @@ void cleanup_and_restart()
 
 void boot_application()
 {
-    printf("Booting application.\n");
+    ESP_LOGI(__func__, "Booting application.");
 
     // Set firmware active
     const esp_partition_t* partition = esp_partition_find_first(ESP_PARTITION_TYPE_APP,
@@ -422,10 +423,6 @@ static void sort_app_table(int newMode)
 
 static void read_app_table()
 {
-    esp_err_t err;
-
-    apps_count = 0;
-
     const esp_partition_t *app_table_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
                                                                      PART_SUBTYPE_FACTORY_DATA, NULL);
 
@@ -437,7 +434,8 @@ static void read_app_table()
 
     apps_max = (app_table_part->size / sizeof(odroid_app_t));
 
-    printf("Max apps: %d\n", apps_max);
+    apps_count = 0;
+
     if (!apps) {
         apps = malloc(app_table_part->size);
     }
@@ -447,7 +445,7 @@ static void read_app_table()
         indicate_error();
     }
 
-    err = esp_partition_read(app_table_part, 0, (void*)apps, app_table_part->size);
+    esp_err_t err = esp_partition_read(app_table_part, 0, (void*)apps, app_table_part->size);
     if (err != ESP_OK)
     {
         DisplayError("APP TABLE READ ERROR");
@@ -467,7 +465,7 @@ static void read_app_table()
     //64K align the address (https://docs.espressif.com/projects/esp-idf/en/latest/api-guides/partition-tables.html#offset-size)
     startFlashAddress = ALIGN_ADDRESS(startFlashAddress, 0x10000);
 
-    printf("App count: %d\n", apps_count);
+    ESP_LOGI(__func__, "Read app table (%d apps)", apps_count);
 }
 
 
@@ -503,7 +501,7 @@ static void write_app_table()
         indicate_error();
     }
 
-    printf("Written app table %d\n", apps_count);
+    ESP_LOGI(__func__, "Written app table (%d apps)", apps_count);
 }
 
 
@@ -563,8 +561,7 @@ static void write_partition_table(odroid_partition_t* parts, size_t parts_count,
         indicate_error();
     }
 
-    printf("%s: startTableEntry=%d, startFlashAddress=%#08x\n",
-        __func__, startTableEntry, flashOffset);
+    ESP_LOGI(__func__, "startTableEntry=%d, startFlashAddress=%#08x", startTableEntry, flashOffset);
 
     // blank partition table entries
     for (int i = startTableEntry; i < ESP_PARTITION_TABLE_MAX_ENTRIES; ++i)
@@ -649,7 +646,7 @@ void defrag_flash()
             // move
             for (size_t i = 0; i < app_size; i += FLASH_BLOCK_SIZE)
             {
-                printf("Moving 0x%x to 0x%x\n", oldOffset + i, newOffset + i);
+                ESP_LOGI(__func__, "Moving 0x%x to 0x%x", oldOffset + i, newOffset + i);
 
                 DisplayMessage("Defragmenting ... (E)");
                 spi_flash_erase_range(newOffset + i, FLASH_BLOCK_SIZE);
@@ -699,7 +696,7 @@ void find_free_blocks(odroid_flash_block_t **blocks, size_t *count, size_t *tota
             block->offset = previousBlockEnd;
             block->size = free_space;
             (*totalFreeSpace) += block->size;
-            printf("Free block: %d 0x%x %d\n", i, block->offset, free_space / 1024);
+            ESP_LOGI(__func__, "Found free block: %d 0x%x %d", i, block->offset, free_space / 1024);
         }
 
         previousBlockEnd = apps[i].endOffset + 1;
@@ -710,14 +707,13 @@ void find_free_blocks(odroid_flash_block_t **blocks, size_t *count, size_t *tota
         block->offset = previousBlockEnd;
         block->size = (FLASH_SIZE - previousBlockEnd);
         (*totalFreeSpace) += block->size;
-        printf("Free block: end 0x%x %d\n", block->offset, block->size / 1024);
+        ESP_LOGI(__func__, "Found free block: end 0x%x %d", block->offset, block->size / 1024);
     }
 }
 
 
 int find_free_block(size_t size, bool defragIfNeeded)
 {
-    //read_app_table();
     odroid_flash_block_t *blocks;
     size_t count, totalFreeSpace;
 
@@ -823,10 +819,10 @@ void flash_utility()
 
 void flash_firmware(const char* fullPath)
 {
+    ESP_LOGD(__func__, "HEAP=%#010x", esp_get_free_heap_size());
+
     size_t count;
     bool can_proceed = true;
-
-    printf("%s: HEAP=%#010x\n", __func__, esp_get_free_heap_size());
 
     read_partition_table();
     read_app_table();
@@ -834,7 +830,7 @@ void flash_firmware(const char* fullPath)
     ui_draw_title("Install Application", "Destination: Pending");
     UpdateDisplay();
 
-    printf("Opening file '%s'.\n", fullPath);
+    ESP_LOGI(__func__, "Flashing file: %s", fullPath);
 
     FILE* file = fopen(fullPath, "rb");
     if (file == NULL)
@@ -861,7 +857,8 @@ void flash_firmware(const char* fullPath)
     strncpy(app->filename, strrchr(fullPath, '/'), FIRMWARE_DESCRIPTION_SIZE-1);
     memcpy(app->tile, fw->fileHeader.tile, FIRMWARE_TILE_SIZE * 2);
 
-    printf("FirmwareDescription='%s'\n", app->description);
+    ESP_LOGI(__func__, "Destination: 0x%x", currentFlashAddress);
+    ESP_LOGI(__func__, "Description: '%s'", app->description);
 
     sprintf(tempstring, "Destination: 0x%x", currentFlashAddress);
     ui_draw_title("Install Application", tempstring);
@@ -898,7 +895,7 @@ void flash_firmware(const char* fullPath)
 
 
     // Verify file integerity
-    printf("%s: expected_checksum=%#010x\n", __func__, fw->checksum);
+    ESP_LOGI(__func__, "Expected checksum: %#010x",fw->checksum);
 
     fseek(file, 0, SEEK_SET);
 
@@ -916,7 +913,7 @@ void flash_firmware(const char* fullPath)
         if (count < FLASH_BLOCK_SIZE) break;
     }
 
-    printf("%s: checksum=%#010x\n", __func__, checksum);
+    ESP_LOGI(__func__, "Computed checksum: %#010x", checksum);
 
     if (checksum != fw->checksum)
     {
@@ -962,17 +959,17 @@ void flash_firmware(const char* fullPath)
             int eraseBlocks = length / ERASE_BLOCK_SIZE;
             if (eraseBlocks * ERASE_BLOCK_SIZE < length) ++eraseBlocks;
 
+            ESP_LOGI(__func__, "Erasing ... (%d)", app->parts_count);
+
             // Display
             sprintf(tempstring, "Erasing ... (%d)", app->parts_count);
-
-            printf("%s\n", tempstring);
             DisplayProgress(0);
             DisplayMessage(tempstring);
 
             esp_err_t ret = spi_flash_erase_range(currentFlashAddress, eraseBlocks * ERASE_BLOCK_SIZE);
             if (ret != ESP_OK)
             {
-                printf("spi_flash_erase_range failed. eraseBlocks=%d\n", eraseBlocks);
+                ESP_LOGE(__func__, "spi_flash_erase_range failed. eraseBlocks=%d", eraseBlocks);
                 DisplayError("ERASE ERROR");
                 indicate_error();
             }
@@ -986,15 +983,13 @@ void flash_firmware(const char* fullPath)
             int totalCount = 0;
             for (int offset = 0; offset < length; offset += FLASH_BLOCK_SIZE)
             {
-                // Display
-                sprintf(tempstring, "Writing (%d)", app->parts_count);
+                ESP_LOGI(__func__, "Writing (%d) at %#08x", app->parts_count, offset);
 
-                printf("%s - %#08x\n", tempstring, offset);
+                sprintf(tempstring, "Writing (%d)", app->parts_count);
                 DisplayProgress((float)offset / (float)(length - FLASH_BLOCK_SIZE) * 100.0f);
                 DisplayMessage(tempstring);
 
                 // read
-                //printf("Reading offset=0x%x\n", offset);
                 count = fread(dataBuffer, 1, FLASH_BLOCK_SIZE, file);
                 if (count <= 0)
                 {
@@ -1007,12 +1002,11 @@ void flash_firmware(const char* fullPath)
                     count = length - offset;
                 }
 
-
                 // flash
                 ret = spi_flash_write(currentFlashAddress + offset, dataBuffer, count);
                 if (ret != ESP_OK)
         		{
-        			printf("spi_flash_write failed. address=%#08x\n", currentFlashAddress + offset);
+        			ESP_LOGE(__func__, "spi_flash_write failed. address=%#08x", currentFlashAddress + offset);
                     DisplayError("WRITE ERROR");
                     indicate_error();
         		}
@@ -1022,7 +1016,7 @@ void flash_firmware(const char* fullPath)
 
             if (totalCount != length)
             {
-                printf("Size mismatch: lenght=%#08x, totalCount=%#08x\n", length, totalCount);
+                ESP_LOGE(__func__, "Size mismatch: length=%#08x, totalCount=%#08x", length, totalCount);
                 DisplayError("DATA SIZE ERROR");
                 indicate_error();
             }
@@ -1033,7 +1027,7 @@ void flash_firmware(const char* fullPath)
         }
 
         // Notify OK
-        printf("OK: [%d] Length=%#08x\n", app->parts_count, length);
+        ESP_LOGI(__func__, "Partition(%d): OK. Length=%#08x", app->parts_count, length);
 
         app->parts_count++;
         currentFlashAddress += slot->length;
@@ -1198,7 +1192,7 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
 
 char* ui_choose_file(const char* path)
 {
-    printf("%s: HEAP=%#010x\n", __func__, esp_get_free_heap_size());
+    ESP_LOGD(__func__, "HEAP=%#010x", esp_get_free_heap_size());
 
     // Check SD card
     if (sdcardret != ESP_OK)
@@ -1207,14 +1201,13 @@ char* ui_choose_file(const char* path)
         DisplayError("SD CARD ERROR");
         vTaskDelay(200);
         return NULL;
-        //indicate_error();
     }
 
     char* result = NULL;
 
     char** files = NULL;
     int fileCount = odroid_sdcard_files_get(path, ".fw", &files);
-    printf("%s: fileCount=%d\n", __func__, fileCount);
+    ESP_LOGI(__func__, "fileCount=%d", fileCount);
 
     // Selection
     int currentItem = 0;
@@ -1301,7 +1294,7 @@ static void ui_draw_dialog(char options[], int optionCount, int currentItem)
         UG_SetBackcolor(bg);
         UG_FillFrame(left, top, left + itemWidth, top + itemHeight, bg);
         UG_FontSelect(&FONT_8X12);
-        UG_PutString(left + 2, top + 2, &options[i * 32]);
+        UG_PutString(left + 2, top + 3, &options[i * 32]);
 
         top += itemHeight;
     }
@@ -1318,7 +1311,7 @@ static void ui_draw_dialog(char options[], int optionCount, int currentItem)
 
 static int ui_choose_dialog(char options[], int optionCount, bool cancellable)
 {
-    printf("%s: HEAP=%#010x\n", __func__, esp_get_free_heap_size());
+    ESP_LOGD(__func__, "HEAP=%#010x", esp_get_free_heap_size());
 
     int currentItem = 0;
 
@@ -1377,7 +1370,7 @@ static void ui_draw_app_page(int currentItem)
 
 void ui_choose_app()
 {
-    printf("%s: HEAP=%#010x\n", __func__, esp_get_free_heap_size());
+    ESP_LOGD(__func__, "HEAP=%#010x", esp_get_free_heap_size());
 
     nvs_get_i32(nvs_h, "display_order", &displayOrder);
 
@@ -1470,7 +1463,6 @@ void ui_choose_app()
                 case 0: // Install from SD Card
                     fileName = ui_choose_file(FIRMWARE_PATH);
                     if (fileName) {
-                        printf("%s: fileName='%s'\n", __func__, fileName);
                         flash_firmware(fileName);
                         free(fileName);
                     }
@@ -1505,10 +1497,16 @@ void ui_choose_app()
 
 void app_main(void)
 {
-    printf("odroid-go-firmware (Ver: %s). HEAP=%#010x\n", VERSION, esp_get_free_heap_size());
+    printf("\n\n#################### odroid-go-firmware (Ver: "VERSION") ####################\n\n");
 
-    // Init NVS. We don't care about errors because we can work without it
-    nvs_flash_init();
+    // Init NVS and ensure it's in a valid state
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)
+    {
+        ESP_LOGW(__func__, "NVS is in invalid state. Erasing...");
+        nvs_flash_erase();
+        nvs_flash_init();
+    }
     nvs_open("firmware", NVS_READWRITE, &nvs_h);
 
     // Init gamepad

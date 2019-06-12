@@ -1,6 +1,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_system.h"
+#include "esp_log.h"
 #include "driver/spi_master.h"
 #include "driver/ledc.h"
 #include "driver/rtc_io.h"
@@ -296,7 +297,7 @@ void backlight_deinit()
     esp_err_t err = ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
     if (err != ESP_OK)
     {
-        printf("%s: ledc_stop failed.\n", __func__);
+        ESP_LOGE(__func__, "LCD: ledc_stop failed.");
     }
 }
 
@@ -481,11 +482,11 @@ void ili9341_init()
 
 
     //Initialize the LCD
-	printf("LCD: calling ili_init.\n");
+	ESP_LOGI(__func__, "LCD: calling ili_init.");
     ili_init();
 
-	printf("LCD: calling backlight_init.\n");
+	ESP_LOGI(__func__, "LCD: calling backlight_init.");
     backlight_init();
 
-    printf("LCD Initialized (%d Hz).\n", LCD_SPI_CLOCK_RATE);
+    ESP_LOGI(__func__, "LCD Initialized (%d Hz).", LCD_SPI_CLOCK_RATE);
 }
