@@ -28,27 +28,25 @@ You will get an error about boot. Ignore it. Power down, hold A, power up, and t
 
 To get rid of it just flash any other .fw through the *stock* firmware.
 
-To access the boot menu you then hold **A** while booting. 
+To access the boot menu you then hold **A** while booting.
 
 
 # Questions
 
 > **Q: How does it work?**
-> 
+>
 > A: When you select an application to boot, the ESP32's partition table is rewritten to make it seem like the app is the only thing there. This firmware keeps track of what is installed and where. The app will then boot every time you power up the system, until you change it.
 
 > **Q: Why rewrite the partition table when booting an application, why not keep all partitions of all apps?**
-> 
+>
 > A: I tried. It causes conflicts with subtypes. Renumbering them mostly worked with single-partition applications. Multi-partition applications (like Go-Play) however mostly did not work because they (understandably) expect the types they declared when packaging.
 
 > **Q: How can I get the boot menu without holding a button for 2 seconds?**
-> 
+>
 > A: Unfortunately, I haven't found a reliable way of doing that yet
 
 
 # To do / Ideas
-
-- Add sorting options (flash order/install order/alphabetical)
 
 - XModem/YModem protocol to transfer applications via USB
 

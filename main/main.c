@@ -682,18 +682,18 @@ void find_free_blocks(odroid_flash_block_t **blocks, size_t *count, size_t *tota
 {
     //read_app_table();
     size_t previousBlockEnd = startFlashAddress;
-    
+
     (*blocks) = malloc(sizeof(odroid_flash_block_t) * 32);
 
     (*totalFreeSpace) = 0;
     (*count) = 0;
 
     sort_app_table(APP_SORT_OFFSET);
-    
+
     for (int i = 0; i < apps_count; i++)
     {
         size_t free_space = apps[i].startOffset - previousBlockEnd;
-        
+
         if (free_space > 0) {
             odroid_flash_block_t *block = &(*blocks)[(*count)++];
             block->offset = previousBlockEnd;
@@ -701,7 +701,7 @@ void find_free_blocks(odroid_flash_block_t **blocks, size_t *count, size_t *tota
             (*totalFreeSpace) += block->size;
             printf("Free block: %d 0x%x %d\n", i, block->offset, free_space / 1024);
         }
-        
+
         previousBlockEnd = apps[i].endOffset + 1;
     }
 
@@ -722,7 +722,7 @@ int find_free_block(size_t size, bool defragIfNeeded)
     size_t count, totalFreeSpace;
 
     find_free_blocks(&blocks, &count, &totalFreeSpace);
-    
+
     int result = -1;
 
     for (int i = 0; i < count; i++)
@@ -737,7 +737,7 @@ int find_free_block(size_t size, bool defragIfNeeded)
         defrag_flash();
         result = find_free_block(size, false);
     }
-    
+
     free(blocks);
     return result;
 }
@@ -752,7 +752,7 @@ bool firmware_get_info(const char* filename, odroid_fw_t* outData)
     {
         return false;
     }
-    
+
     fseek(file, 0, SEEK_END);
     file_size = ftell(file);
     fseek(file, 0, SEEK_SET);
@@ -762,12 +762,12 @@ bool firmware_get_info(const char* filename, odroid_fw_t* outData)
     {
         goto firmware_get_info_err;
     }
-    
+
     if (memcmp(HEADER_V00_01, outData->fileHeader.header, strlen(HEADER_V00_01)) != 0)
     {
         goto firmware_get_info_err;
     }
-    
+
     outData->fileHeader.description[FIRMWARE_DESCRIPTION_SIZE - 1] = 0;
     outData->parts_count = 0;
     outData->flashSize = 0;
@@ -781,7 +781,7 @@ bool firmware_get_info(const char* filename, odroid_fw_t* outData)
 
         if (fread(part, sizeof(odroid_partition_t), 1, file) != 1)
             goto firmware_get_info_err;
-        
+
         // Check if dataLength is valid
         if (ftell(file) + part->dataLength > file_size || part->dataLength > part->length)
             goto firmware_get_info_err;
@@ -789,7 +789,7 @@ bool firmware_get_info(const char* filename, odroid_fw_t* outData)
         // Check partition subtype
         if (part->type == 0xff)
             goto firmware_get_info_err;
-        
+
         outData->flashSize += part->length;
         outData->parts_count++;
 
@@ -830,7 +830,7 @@ void flash_firmware(const char* fullPath)
 
     read_partition_table();
     read_app_table();
-    
+
     ui_draw_title("Install Application", "Destination: Pending");
     UpdateDisplay();
 
@@ -856,7 +856,7 @@ void flash_firmware(const char* fullPath)
 
     odroid_app_t *app = &apps[apps_count];
     memset(app, 0x00, sizeof(odroid_app_t));
-    
+
     strncpy(app->description, fw->fileHeader.description, FIRMWARE_DESCRIPTION_SIZE-1);
     strncpy(app->filename, strrchr(fullPath, '/'), FIRMWARE_DESCRIPTION_SIZE-1);
     memcpy(app->tile, fw->fileHeader.tile, FIRMWARE_TILE_SIZE * 2);
@@ -873,12 +873,12 @@ void flash_firmware(const char* fullPath)
         DisplayError("NOT ENOUGH FREE SPACE");
         can_proceed = false;
     }
-    
+
     if (can_proceed)
     {
         DisplayMessage("[START]");
     }
-    
+
     DisplayFooter("[B] Cancel");
 
     while (1) {
