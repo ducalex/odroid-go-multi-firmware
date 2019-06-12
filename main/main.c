@@ -1499,14 +1499,8 @@ void app_main(void)
 {
     printf("\n\n#################### odroid-go-firmware (Ver: "VERSION") ####################\n\n");
 
-    // Init NVS and ensure it's in a valid state
-    esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)
-    {
-        ESP_LOGW(__func__, "NVS is in invalid state. Erasing...");
-        nvs_flash_erase();
-        nvs_flash_init();
-    }
+    // Init NVS
+    nvs_flash_init();
     nvs_open("firmware", NVS_READWRITE, &nvs_h);
 
     // Init gamepad
