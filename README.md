@@ -12,6 +12,8 @@ This method will replace the stock firmware.
 
 Follow these instructions: https://wiki.odroid.com/odroid_go/firmware_update but use the .img provided here.
 
+*Note: To preserve your flashed applications when upgrading you must IGNORE THE ERASE STEP.*
+
 To get rid of it follow the instructions again using their .img file.
 
 To access the boot menu you then hold **B** while booting.
@@ -63,3 +65,8 @@ You need to apply the following patch to your esp-idf:
 https://github.com/OtherCrashOverride/esp-idf/commit/49fbef73c300920d2f63c9afb705eefabe3dac87
 
 The previously included no-patch code was too unreliable and it has been removed as of 20190604.
+
+
+Another issue is with Go-Play crashing when using a recent esp-idf. Because of the closed source nature of
+Springboard, I can't be sure 100% certain but it appears to be related to NVS. If you use an esp-idf more recent
+that 3.1 you should backport esp-idf/components/nvs_flash/src/nvs_page.hpp and .cpp of 3.1 (revision e14b836).
