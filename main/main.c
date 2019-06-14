@@ -199,9 +199,6 @@ static void battery_task(void *arg)
 }
 
 
-static void ui_draw_title(char*, char*);
-
-
 void indicate_error()
 {
     int level = 0;
@@ -233,6 +230,8 @@ static void ui_draw_image(short x, short y, short width, short height, uint16_t*
         }
     }
 }
+
+static void ui_draw_title(char*, char*);
 
 static void ClearScreen()
 {
@@ -266,6 +265,18 @@ static void DisplayMessage(char* message)
     UG_FillFrame(0, top, 319, top + 12, C_WHITE);
     UG_PutString(left, top, message);
 
+    UpdateDisplay();
+}
+
+static void DisplayNotification(char* message)
+{
+    UG_FontSelect(&FONT_8X12);
+    short left = (320 / 2) - (strlen(message) * 9 / 2);
+    short top = 239 - 16;
+    UG_SetForecolor(C_WHITE);
+    UG_SetBackcolor(C_BLUE);
+    UG_FillFrame(0, top, 319, top + 16, C_BLUE);
+    UG_PutString(left, top + 3, message);
     UpdateDisplay();
 }
 
@@ -1374,8 +1385,8 @@ void ui_choose_app()
 
     sort_app_table(displayOrder);
 
-    // Selection
     int currentItem = 0;
+    int queuedBtn = -1;
 
     while (true)
     {
@@ -1384,7 +1395,8 @@ void ui_choose_app()
         int page = (currentItem / ITEM_COUNT) * ITEM_COUNT;
 
         // Wait for input but refresh display after 1000 ticks if no input
-        int btn = wait_for_button_press(1000);
+        int btn = (queuedBtn != -1) ? queuedBtn : wait_for_button_press(1000);
+        queuedBtn = -1;
 
 		if (apps_count > 0)
 		{
@@ -1426,18 +1438,14 @@ void ui_choose_app()
                     sort_app_table(displayOrder);
                     ui_draw_app_page(currentItem);
 
-                    char descriptions[][16] = {"OFFSET", "INSTALL ORDER", "DESCRIPTION"};
+                    char descriptions[][16] = {"OFFSET", "INSTALL", "NAME"};
                     char order[][5] = {"ASC", "DESC"};
                     sprintf(tempstring, "NOW SORTING BY %s %s", descriptions[(displayOrder >> 1)], order[displayOrder & 1]);
 
-                    UG_FontSelect(&FONT_8X8);
-                    UG_SetBackcolor(C_MIDNIGHT_BLUE);
-                    UG_SetForecolor(C_WHITE);
-                    UG_FillFrame(0, 239 - 16, 319, 239, C_MIDNIGHT_BLUE);
-                    UG_PutString((320 / 2) - (strlen(tempstring) * 9 / 2), 240 - 4 - 8, tempstring);
-                    UpdateDisplay();
+                    DisplayNotification(tempstring);
+                    queuedBtn = wait_for_button_press(200);
                 }
-                while (wait_for_button_press(200) == ODROID_INPUT_SELECT);
+                while (queuedBtn == ODROID_INPUT_SELECT);
 
                 nvs_set_i32(nvs_h, "display_order", displayOrder);
                 nvs_commit(nvs_h);
@@ -1481,13 +1489,21 @@ void ui_choose_app()
                     nvs_flash_erase();
                     break;
                 case 4: // Restart
-                    esp_ota_set_boot_partition(esp_partition_find_first(ESP_PARTITION_TYPE_APP,
-                        ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL)); // Restore OTA data if possible and reboot
                     cleanup_and_restart();
                     break;
             }
 
             sort_app_table(displayOrder);
+        }
+        else if (btn == ODROID_INPUT_B)
+        {
+            DisplayNotification("Press B again to boot last app.");
+            queuedBtn = wait_for_button_press(100);
+            if (queuedBtn == ODROID_INPUT_B) {
+                esp_ota_set_boot_partition(esp_partition_find_first(ESP_PARTITION_TYPE_APP,
+                    ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL)); // Restore OTA data if possible and reboot
+                cleanup_and_restart();
+            }
         }
     }
 }
