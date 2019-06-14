@@ -485,7 +485,7 @@ static void write_app_table()
         memset(&apps[i], 0xff, sizeof(odroid_app_t));
     }
 
-    sort_app_table(APP_SORT_OFFSET);
+    //sort_app_table(APP_SORT_OFFSET); // Causes issues in flash_firmware
 
     err = esp_partition_erase_range(app_table_part, 0, app_table_part->size);
     if (err != ESP_OK)
@@ -677,7 +677,6 @@ void defrag_flash()
 
 void find_free_blocks(odroid_flash_block_t **blocks, size_t *count, size_t *totalFreeSpace)
 {
-    //read_app_table();
     size_t previousBlockEnd = startFlashAddress;
 
     (*blocks) = malloc(sizeof(odroid_flash_block_t) * 32);
@@ -824,8 +823,7 @@ void flash_firmware(const char* fullPath)
     size_t count;
     bool can_proceed = true;
 
-    read_partition_table();
-    read_app_table();
+    sort_app_table(APP_SORT_OFFSET);
 
     ui_draw_title("Install Application", "Destination: Pending");
     UpdateDisplay();
