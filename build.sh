@@ -2,6 +2,8 @@
 RELEASE=`date +%Y%m%d`;
 BINNAME=odroid-go-firmware
 
+#ffmpeg -vcodec png -i tile.png -vcodec rawvideo -f rawvideo -pix_fmt rgb565 tile.raw
+
 ./tools/mkfw/mkfw "Firmware Manager ($RELEASE)" tile.raw \
     0 32 851968 manager build/$BINNAME.bin \
     1 254 131072 apptable empty.bin \
