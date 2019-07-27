@@ -52,6 +52,10 @@
 #define FLASH_BLOCK_SIZE (64 * 1024)
 #define ERASE_BLOCK_SIZE (4 * 1024)
 
+#define APP_NVS_SIZE 0x3000
+
+#define NVS_PART_NAME "nvs_fw"
+
 #ifndef COMPILEDATE
 #define COMPILEDATE "none"
 #endif
@@ -72,6 +76,9 @@
 
 #define ITEM_COUNT (4)
 
+#define LED_ON() gpio_set_level(GPIO_NUM_2, 1);
+#define LED_OFF() gpio_set_level(GPIO_NUM_2, 0);
+
 const char* SD_CARD = "/sd";
 const char* FIRMWARE_PATH = "/sd/odroid/firmware";
 
@@ -90,9 +97,7 @@ typedef struct
     uint8_t subtype;
     uint8_t _reserved0;
     uint8_t _reserved1;
-
-    uint8_t label[16];
-
+    char     label[16];
     uint32_t flags;
     uint32_t length;
     uint32_t dataLength;
@@ -343,7 +348,7 @@ static void DisplayTile(uint16_t *tileData)
 void cleanup_and_restart()
 {
     // Turn off LED pin
-    gpio_set_level(GPIO_NUM_2, 0);
+    gpio_set_direction(GPIO_NUM_2, GPIO_MODE_INPUT);
 
     // clear and deinit display
     ili9341_clear(0x0000);
@@ -354,7 +359,7 @@ void cleanup_and_restart()
 
     // Close NVS
     nvs_close(nvs_h);
-    nvs_flash_deinit();
+    nvs_flash_deinit_partition(NVS_PART_NAME);
 
     esp_restart();
 }
@@ -650,7 +655,7 @@ void defrag_flash()
     {
         if (apps[i].startOffset > nextStartOffset)
         {
-            gpio_set_level(GPIO_NUM_2, 1);
+            LED_ON();
 
             size_t app_size = apps[i].endOffset - apps[i].startOffset;
             size_t newOffset = nextStartOffset, oldOffset = apps[i].startOffset;
@@ -676,7 +681,7 @@ void defrag_flash()
             apps[i].startOffset = newOffset;
             apps[i].endOffset = newOffset + app_size;
 
-            gpio_set_level(GPIO_NUM_2, 0);
+            LED_OFF();
         }
 
         nextStartOffset = apps[i].endOffset + 1;
@@ -796,6 +801,9 @@ bool firmware_get_info(const char* filename, odroid_fw_t* outData)
         if (part->type == 0xff)
             goto firmware_get_info_err;
 
+        // 4KB align the partition length, this is needed for erasing
+        part->length = ALIGN_ADDRESS(part->length, 0x1000);
+
         outData->flashSize += part->length;
         outData->parts_count++;
 
@@ -807,6 +815,23 @@ bool firmware_get_info(const char* filename, odroid_fw_t* outData)
 
     fseek(file, file_size - sizeof(outData->checksum), SEEK_SET);
     fread(&outData->checksum, sizeof(outData->checksum), 1, file);
+
+    // We try to steal some unused space if possible, otherwise we might waste up to 48K
+    odroid_partition_t *part = &outData->parts[outData->parts_count - 1];
+    if (part->type == ESP_PARTITION_TYPE_APP && (part->length - part->dataLength) >= APP_NVS_SIZE) {
+        ESP_LOGI(__func__, "Found room for NVS partition, reducing last partition size by %d", APP_NVS_SIZE);
+        part->length -= APP_NVS_SIZE;
+        outData->flashSize -= APP_NVS_SIZE;
+    }
+    // Add an application-specific NVS partition.
+    odroid_partition_t *nvs_part = &outData->parts[outData->parts_count];
+    strcpy(nvs_part->label, "nvs");
+    nvs_part->dataLength = 0;
+    nvs_part->length = APP_NVS_SIZE;
+    nvs_part->type = ESP_PARTITION_TYPE_DATA;
+    nvs_part->subtype = ESP_PARTITION_SUBTYPE_DATA_NVS;
+    outData->flashSize += nvs_part->length;
+    outData->parts_count++;
 
     fclose(file);
     return true;
@@ -830,6 +855,7 @@ void flash_utility()
 void flash_firmware(const char* fullPath)
 {
     ESP_LOGD(__func__, "HEAP=%#010x", esp_get_free_heap_size());
+    LED_OFF();
 
     size_t count;
     bool can_proceed = true;
@@ -865,6 +891,8 @@ void flash_firmware(const char* fullPath)
     strncpy(app->description, fw->fileHeader.description, FIRMWARE_DESCRIPTION_SIZE-1);
     strncpy(app->filename, strrchr(fullPath, '/'), FIRMWARE_DESCRIPTION_SIZE-1);
     memcpy(app->tile, fw->fileHeader.tile, FIRMWARE_TILE_SIZE * 2);
+    memcpy(app->parts, fw->parts, sizeof(app->parts));
+    app->parts_count = fw->parts_count;
 
     ESP_LOGI(__func__, "Destination: 0x%x", currentFlashAddress);
     ESP_LOGI(__func__, "Description: '%s'", app->description);
@@ -898,6 +926,7 @@ void flash_firmware(const char* fullPath)
         }
     }
 
+    LED_ON();
 
     DisplayMessage("Verifying ...");
     DisplayFooter("");
@@ -937,65 +966,46 @@ void flash_firmware(const char* fullPath)
     app->startOffset = currentFlashAddress;
 
     // Copy the firmware
-    while(true)
+    for (int i = 0; i < app->parts_count; i++)
     {
-        if (ftell(file) >= (fw->fileSize - sizeof(checksum)))
-        {
-            break;
-        }
+        odroid_partition_t *slot = &app->parts[i];
 
-        // Partition
-        odroid_partition_t *slot = &app->parts[app->parts_count];
+        // Skip header, firmware_get_info prepared everything for us
+        fseek(file, sizeof(odroid_partition_t), SEEK_CUR);
 
-        count = fread(slot, 1, sizeof(odroid_partition_t), file);
-        if (count != sizeof(odroid_partition_t))
+        LED_OFF();
+
+        // Erase target partition space
+        ESP_LOGI(__func__, "Erasing ... (%d)", i);
+        sprintf(tempstring, "Erasing ... (%d/%d)", i+1, app->parts_count);
+        DisplayProgress(0);
+        DisplayMessage(tempstring);
+
+        int eraseBlocks = slot->length / ERASE_BLOCK_SIZE;
+        if (eraseBlocks * ERASE_BLOCK_SIZE < slot->length) ++eraseBlocks;
+
+        esp_err_t ret = spi_flash_erase_range(currentFlashAddress, eraseBlocks * ERASE_BLOCK_SIZE);
+        if (ret != ESP_OK)
         {
-            DisplayError("PARTITION READ ERROR");
+            ESP_LOGE(__func__, "spi_flash_erase_range failed. eraseBlocks=%d", eraseBlocks);
+            DisplayError("ERASE ERROR");
             indicate_error();
         }
 
-        uint32_t length = slot->dataLength;
-
-        size_t nextEntry = ftell(file) + length;
-
-        if (length > 0)
+        if (slot->dataLength > 0)
         {
-            // turn LED off
-            gpio_set_level(GPIO_NUM_2, 0);
+            size_t nextEntry = ftell(file) + slot->dataLength;
 
-
-            // erase
-            int eraseBlocks = length / ERASE_BLOCK_SIZE;
-            if (eraseBlocks * ERASE_BLOCK_SIZE < length) ++eraseBlocks;
-
-            ESP_LOGI(__func__, "Erasing ... (%d)", app->parts_count);
-
-            // Display
-            sprintf(tempstring, "Erasing ... (%d)", app->parts_count);
-            DisplayProgress(0);
-            DisplayMessage(tempstring);
-
-            esp_err_t ret = spi_flash_erase_range(currentFlashAddress, eraseBlocks * ERASE_BLOCK_SIZE);
-            if (ret != ESP_OK)
-            {
-                ESP_LOGE(__func__, "spi_flash_erase_range failed. eraseBlocks=%d", eraseBlocks);
-                DisplayError("ERASE ERROR");
-                indicate_error();
-            }
-
-
-            // turn LED on
-            gpio_set_level(GPIO_NUM_2, 1);
-
+            LED_ON();
 
             // Write data
             int totalCount = 0;
-            for (int offset = 0; offset < length; offset += FLASH_BLOCK_SIZE)
+            for (int offset = 0; offset < slot->dataLength; offset += FLASH_BLOCK_SIZE)
             {
-                ESP_LOGI(__func__, "Writing (%d) at %#08x", app->parts_count, offset);
+                ESP_LOGI(__func__, "Writing (%d) at %#08x", i, offset);
 
-                sprintf(tempstring, "Writing (%d)", app->parts_count);
-                DisplayProgress((float)offset / (float)(length - FLASH_BLOCK_SIZE) * 100.0f);
+                sprintf(tempstring, "Writing (%d/%d)", i+1, app->parts_count);
+                DisplayProgress((float)offset / (float)(slot->dataLength - FLASH_BLOCK_SIZE) * 100.0f);
                 DisplayMessage(tempstring);
 
                 // read
@@ -1006,9 +1016,9 @@ void flash_firmware(const char* fullPath)
                     indicate_error();
                 }
 
-                if (offset + count >= length)
+                if (offset + count >= slot->dataLength)
                 {
-                    count = length - offset;
+                    count = slot->dataLength - offset;
                 }
 
                 // flash
@@ -1023,31 +1033,22 @@ void flash_firmware(const char* fullPath)
                 totalCount += count;
             }
 
-            if (totalCount != length)
+            LED_OFF();
+
+            if (totalCount != slot->dataLength)
             {
-                ESP_LOGE(__func__, "Size mismatch: length=%#08x, totalCount=%#08x", length, totalCount);
+                ESP_LOGE(__func__, "Size mismatch: length=%#08x, totalCount=%#08x", slot->dataLength, totalCount);
                 DisplayError("DATA SIZE ERROR");
                 indicate_error();
             }
 
-
+            fseek(file, nextEntry, SEEK_SET);
             // TODO: verify
-
         }
 
         // Notify OK
-        ESP_LOGI(__func__, "Partition(%d): OK. Length=%#08x", app->parts_count, length);
-
-        app->parts_count++;
+        ESP_LOGI(__func__, "Partition(%d): OK. Length=%#08x", i, slot->length);
         currentFlashAddress += slot->length;
-
-        // Seek to next entry
-        if (fseek(file, nextEntry, SEEK_SET) != 0)
-        {
-            DisplayError("SEEK ERROR");
-            indicate_error();
-        }
-
     }
 
     fclose(file);
@@ -1061,9 +1062,6 @@ void flash_firmware(const char* fullPath)
     // Write app table
     apps_count++; // Everything went well, acknowledge the new app
     write_app_table();
-
-    // turn LED off
-    gpio_set_level(GPIO_NUM_2, 0);
 
     DisplayMessage("Ready !");
     DisplayFooter("[B] Go Back   |   [A] Boot");
@@ -1457,8 +1455,8 @@ void ui_choose_app()
             const char options[][32] = {
                 "Install from SD Card",
                 "Erase selected app",
+                "Erase selected NVS",
                 "Erase all apps",
-                "Erase NVS",
                 "Restart System"
             };
 
@@ -1479,14 +1477,16 @@ void ui_choose_app()
                     apps_count--;
                     write_app_table();
                     break;
-                case 2: // Erase all apps
+                case 2: // Erase selected app's NVS
+                    write_partition_table(apps[currentItem].parts,
+                        apps[currentItem].parts_count, apps[currentItem].startOffset);
+                    nvs_flash_erase();
+                    break;
+                case 3: // Erase all apps
                     memset(apps, 0xFF, apps_max * sizeof(odroid_app_t));
                     apps_count = 0;
                     write_app_table();
                     write_partition_table(NULL, 0, 0);
-                    break;
-                case 3: // Erase NVS
-                    nvs_flash_erase();
                     break;
                 case 4: // Restart
                     cleanup_and_restart();
@@ -1514,8 +1514,11 @@ void app_main(void)
     printf("\n\n#################### odroid-go-firmware (Ver: "VERSION") ####################\n\n");
 
     // Init NVS
-    nvs_flash_init();
-    nvs_open("firmware", NVS_READWRITE, &nvs_h);
+    nvs_flash_init_partition(NVS_PART_NAME);
+    if (nvs_open_from_partition(NVS_PART_NAME, "settings", NVS_READWRITE, &nvs_h) != ESP_OK) {
+        nvs_flash_erase_partition(NVS_PART_NAME);
+        nvs_open_from_partition(NVS_PART_NAME, "settings", NVS_READWRITE, &nvs_h);
+    }
 
     // Init gamepad
     input_init();

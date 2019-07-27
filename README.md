@@ -65,8 +65,3 @@ You need to apply the following patch to your esp-idf:
 https://github.com/OtherCrashOverride/esp-idf/commit/49fbef73c300920d2f63c9afb705eefabe3dac87
 
 The previously included no-patch code was too unreliable and it has been removed as of 20190604.
-
-
-Another issue is with Go-Play crashing when using a recent esp-idf. Because of the closed source nature of
-Springboard, I can't be sure 100% certain but it appears to be related to NVS. If you use an esp-idf more recent
-that 3.1 you should backport esp-idf/components/nvs_flash/src/nvs_page.hpp and .cpp of 3.1 (revision e14b836).
