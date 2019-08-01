@@ -143,6 +143,13 @@ typedef struct
 } odroid_flash_block_t;
 // ------
 
+typedef struct
+{
+    long id;
+    char label[32];
+    bool enabled;
+} dialog_option_t;
+
 static odroid_app_t* apps;
 static int apps_count = -1;
 static int apps_max = 4;
@@ -1277,7 +1284,7 @@ char* ui_choose_file(const char* path)
 
 
 
-static void ui_draw_dialog(char options[], int optionCount, int currentItem)
+static void ui_draw_dialog(dialog_option_t *options, int optionCount, int currentItem)
 {
     int border = 3;
     int itemWidth = 190;
@@ -1297,11 +1304,15 @@ static void ui_draw_dialog(char options[], int optionCount, int currentItem)
         int fg = (i == currentItem) ? C_WHITE : C_BLACK;
         int bg = (i == currentItem) ? C_BLUE : C_WHITE;
 
+        if (!options[i].enabled) {
+            fg = C_GRAY;
+        }
+
         UG_SetForecolor(fg);
         UG_SetBackcolor(bg);
         UG_FillFrame(left, top, left + itemWidth, top + itemHeight, bg);
         UG_FontSelect(&FONT_8X12);
-        UG_PutString(left + 2, top + 3, &options[i * 32]);
+        UG_PutString(left + 2, top + 3, (const char*)options[i].label);
 
         top += itemHeight;
     }
@@ -1316,7 +1327,7 @@ static void ui_draw_dialog(char options[], int optionCount, int currentItem)
 }
 
 
-static int ui_choose_dialog(char options[], int optionCount, bool cancellable)
+static int ui_choose_dialog(dialog_option_t *options, int optionCount, bool cancellable)
 {
     ESP_LOGD(__func__, "HEAP=%#010x", esp_get_free_heap_size());
 
@@ -1338,7 +1349,9 @@ static int ui_choose_dialog(char options[], int optionCount, bool cancellable)
         }
         else if (btn == ODROID_INPUT_A)
         {
-            return currentItem;
+            if (options[currentItem].enabled) {
+                return currentItem;
+            }
         }
         else if (btn == ODROID_INPUT_B)
         {
@@ -1346,7 +1359,7 @@ static int ui_choose_dialog(char options[], int optionCount, bool cancellable)
         }
     }
 
-    return currentItem;
+    return options[currentItem].id;
 }
 
 
@@ -1452,12 +1465,12 @@ void ui_choose_app()
 
         if (btn == ODROID_INPUT_MENU)
         {
-            const char options[][32] = {
-                "Install from SD Card",
-                "Erase selected app",
-                "Erase selected NVS",
-                "Erase all apps",
-                "Restart System"
+            dialog_option_t options[] = {
+                {0, "Install from SD Card", true},
+                {1, "Erase selected app", apps_count > 0},
+                {2, "Erase selected NVS", apps_count > 0},
+                {3, "Erase all apps", apps_count > 0},
+                {4, "Restart System", true}
             };
 
             int choice = ui_choose_dialog(options, 5, true);
@@ -1480,7 +1493,13 @@ void ui_choose_app()
                 case 2: // Erase selected app's NVS
                     write_partition_table(apps[currentItem].parts,
                         apps[currentItem].parts_count, apps[currentItem].startOffset);
-                    nvs_flash_erase();
+                    if (nvs_flash_erase() == ESP_OK) {
+                        DisplayNotification("Operation successful!");
+                        queuedBtn = wait_for_button_press(100);
+                    } else {
+                        DisplayNotification("An error has occurred!");
+                        queuedBtn = wait_for_button_press(200);
+                    }
                     break;
                 case 3: // Erase all apps
                     memset(apps, 0xFF, apps_max * sizeof(odroid_app_t));
