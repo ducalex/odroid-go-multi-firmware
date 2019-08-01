@@ -1,36 +1,17 @@
 # Description
 This is a mod of odroid-go-firmware. It allows to keep installed multiple applications at once, allowing you to switch instantly between them.
 
-It can replace the stock firmware or it can coexist and be installed like a normal GO .fw app.
-
-
 # Installation
-There are two methods:
 
-## Replace the stock firmware
 This method will replace the stock firmware.
 
 Follow these instructions: https://wiki.odroid.com/odroid_go/firmware_update but use the .img provided here.
 
-*Note: To preserve your flashed applications when upgrading you must IGNORE THE ERASE STEP.*
+*Note: To preserve your flashed applications when upgrading you must ignore the ERASE step.*
 
-To get rid of it follow the instructions again using their .img file.
+To get rid of it follow the instructions again using their official .img file.
 
-To access the boot menu you then hold **B** while booting.
-
-
-
-
-## Like any other application
-This method is easier as you just drop a file on your sd card. You can also still access the Odroid's stock firmware normally by holding B.
-
-Follow these instructions: https://wiki.odroid.com/odroid_go/write_app but use the .fw provided here.
-
-You will get an error about boot. Ignore it. Power down, hold A, power up, and the new firmware should appear!
-
-To get rid of it just flash any other .fw through the *stock* firmware.
-
-To access the boot menu you then hold **A** while booting.
+To access the boot menu you then hold **B** while booting, as before.
 
 
 # Questions
@@ -60,8 +41,6 @@ To access the boot menu you then hold **A** while booting.
 
 
 # Compilation
-You need to apply the following patch to your esp-idf:
+The official esp-idf version 3.1 or newer is required and you need to apply this odroid-go-firmware-specific patch:
 
 https://github.com/OtherCrashOverride/esp-idf/commit/49fbef73c300920d2f63c9afb705eefabe3dac87
-
-The previously included no-patch code was too unreliable and it has been removed as of 20190604.
