@@ -47,3 +47,12 @@ The official esp-idf version 3.1 or newer is required and you need to apply the 
 - [Improve SD card compatibility](https://github.com/OtherCrashOverride/esp-idf/commit/a83e557538a033e25c376eedac79663c9b7b75da) (Recommended)
 
 You can also find the patches in tools/patches.
+
+_Note: Those patches do not introduce breaking changes to non-GO projects and can safely be applied to your global esp-idf installation._
+
+## Build Steps:
+1. Compile mkimg: `cd tools/mkimg && make`
+2. Compile firmware: `cd .. && make -j4`
+3. And finally:
+   - To produce .img: `./build.sh`
+   - To flash and debug: `make flash monitor`
