@@ -1,8 +1,8 @@
 build/
 .vscode/
+sdkconfig
 sdkconfig.old
 *.fw
 *.img
 *.exe
 *.gch
-

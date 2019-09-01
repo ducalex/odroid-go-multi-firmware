@@ -41,6 +41,9 @@ To access the boot menu you then hold **B** while booting, as before.
 
 
 # Compilation
-The official esp-idf version 3.1 or newer is required and you need to apply this odroid-go-firmware-specific patch:
+The official esp-idf version 3.1 or newer is required and you need to apply the following patches:
 
-https://github.com/OtherCrashOverride/esp-idf/commit/49fbef73c300920d2f63c9afb705eefabe3dac87
+- [Allow clearing internal partition list](https://github.com/OtherCrashOverride/esp-idf/commit/49fbef73c300920d2f63c9afb705eefabe3dac87) (Required)
+- [Improve SD card compatibility](https://github.com/OtherCrashOverride/esp-idf/commit/a83e557538a033e25c376eedac79663c9b7b75da) (Recommended)
+
+You can also find the patches in tools/patches.
