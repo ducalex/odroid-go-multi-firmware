@@ -1337,7 +1337,7 @@ static int ui_choose_dialog(dialog_option_t *options, int optionCount, bool canc
     {
         ui_draw_dialog(options, optionCount, currentItem);
 
-		int btn = wait_for_button_press(-1);
+        int btn = wait_for_button_press(-1);
 
         if (btn == ODROID_INPUT_DOWN)
         {
@@ -1350,16 +1350,16 @@ static int ui_choose_dialog(dialog_option_t *options, int optionCount, bool canc
         else if (btn == ODROID_INPUT_A)
         {
             if (options[currentItem].enabled) {
-                return currentItem;
+                return options[currentItem].id;
             }
         }
         else if (btn == ODROID_INPUT_B)
         {
-            if (cancellable) return -1;
+            if (cancellable) break;
         }
     }
 
-    return options[currentItem].id;
+    return -1;
 }
 
 
