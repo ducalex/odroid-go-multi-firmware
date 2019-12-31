@@ -3,7 +3,7 @@
 # project subdirectory.
 #
 
-PROJECT_NAME := odroid-go-firmware
+PROJECT_NAME := odroid-go-multi-firmware
 
 include $(IDF_PATH)/make/project.mk
 

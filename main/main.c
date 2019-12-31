@@ -57,11 +57,11 @@
 #define NVS_PART_NAME "nvs_fw"
 
 #ifndef COMPILEDATE
-#define COMPILEDATE "none"
+#define COMPILEDATE __DATE__
 #endif
 
 #ifndef GITREV
-#define GITREV "none"
+#define GITREV "src"
 #endif
 
 #define VERSION COMPILEDATE "-" GITREV
@@ -84,6 +84,8 @@ const char* FIRMWARE_PATH = "/sd/odroid/firmware";
 
 //const char* HEADER = "ODROIDGO_FIRMWARE_V00_00";
 const char* HEADER_V00_01 = "ODROIDGO_FIRMWARE_V00_01";
+
+extern const esp_app_desc_t esp_app_desc;
 
 
 // <partition type=0x00 subtype=0x00 label='name' flags=0x00000000 length=0x00000000>
@@ -1321,7 +1323,7 @@ static void ui_draw_dialog(dialog_option_t *options, int optionCount, int curren
     UG_SetForecolor(C_GRAY);
     UG_SetBackcolor(C_WHITE);
     UG_FontSelect(&FONT_8X8);
-    UG_PutString(left + 2, top + 2, "Version:\n " VERSION);
+    UG_PutString(left + 2, top + 2, "Multi-firmware build:\n " VERSION);
 
     UpdateDisplay();
 }

@@ -1,5 +1,5 @@
 # Description
-This is a mod of odroid-go-firmware for the Odroid GO. It allows you to keep multiple applications installed in the flash and switch instantly between them. You can think of it as a multi-boot loader.
+Odroid-go-multi-firmware is an improvement of the official Odroid GO firmware. It allows you to keep multiple applications installed in the flash and switch instantly between them. You can think of it as a multi-boot loader.
 
 
 # Installation
@@ -32,7 +32,7 @@ _Note: There is no risk in flashing your Odroid GO and you can easily return to 
 
 # To do / Ideas
 
-- Wifi or Bluetooth file transfer to/from the SD Card
+- Ability to update/flash itself (instead of requiring USB and esptool)
 
 - Copy a flashed application back to the sd card as a .fw
 
@@ -54,5 +54,5 @@ _Note: Those patches do not introduce breaking changes to non-GO (standard ESP32
 1. Compile mkimg: `cd tools/mkimg && make`
 2. Compile firmware: `cd .. && make -j4`
 3. And finally:
-   - To produce .img: `./build.sh`
+   - To produce .img: `./mkimg.sh`
    - To flash and debug: `make flash monitor`
