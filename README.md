@@ -19,11 +19,7 @@ _Note: There is no risk in flashing your Odroid GO and you can easily return to 
 
 > **Q: How does it work?**
 >
-> A: When you select an application to boot, the ESP32's partition table is rewritten to make it seem like the app is the only thing there. This firmware keeps track of what is installed and where. The app will then boot every time you power up the system, until you change it.
-
-> **Q: Why rewrite the partition table when booting an application, why not keep all partitions of all apps?**
->
-> A: I tried. It causes conflicts with subtypes. Single-partition applications worked fine when renumbering the partitions but multi-partition applications (like Go-Play) did not work correctly because they can no longer locate their own partitions.
+> A: When you select an application to boot, the ESP32's partition table is rewritten to make it seem like the app is the only thing there. That way any existing, unmodified, Odroid-GO applications will work. The firmware keeps track of what is installed and where. The app will then boot every time you power up the system, until you change it.
 
 > **Q: How can I get the boot menu without holding a button for 2 seconds?**
 >
@@ -33,9 +29,7 @@ _Note: There is no risk in flashing your Odroid GO and you can easily return to 
 # To do / Ideas
 
 - Ability to update/flash itself (instead of requiring USB and esptool)
-
 - Copy a flashed application back to the sd card as a .fw
-
 - Brightness control
 
 
@@ -56,3 +50,24 @@ _Note: Those patches do not introduce breaking changes to non-GO (standard ESP32
 3. And finally:
    - To produce .img: `./mkimg.sh`
    - To flash and debug: `make flash monitor`
+
+# Technical information
+
+### .fw format:
+```
+ Header:
+   "ODROIDGO_FIRMWARE_V00_01"  24 bytes
+   Firmware Description        40 bytes
+   RAW565 86x48 tile           8256 bytes
+ Partition [, ...]:
+   Type                        1 byte
+   Subtype                     1 byte
+   Padding                     2 bytes
+   Label                       16 bytes
+   Flags                       4 bytes
+   Size                        4 bytes
+   Data length                 4 bytes
+   Data                        <Data length> bytes
+ Footer:
+   CRC32                       4 bytes
+```
