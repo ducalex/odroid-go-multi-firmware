@@ -45,13 +45,15 @@ _Note: Those patches do not introduce breaking changes to non-GO (standard ESP32
 
 
 ## Build Steps:
-1. Compile mkimg: `cd tools/mkimg && make`
-2. Compile firmware: `cd .. && make -j4`
-3. And finally:
+1. Compile firmware: `make -j4` or `idf.py build`
+2. And finally:
    - To produce .img: `./mkimg.sh`
    - To flash and debug: `make flash monitor`
 
 # Technical information
+
+The mkfw.py tool can be used to generate .fw files. Its usage is identical to Odroid's own C mkfw but
+doesn't require a local C compiler.
 
 ### .fw format:
 ```

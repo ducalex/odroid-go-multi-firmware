@@ -60,12 +60,12 @@ typedef struct {
 #define TFT_CMD_SLEEP 0x10
 #define TFT_CMD_DISPLAY_OFF 0x28
 
-static const ili_init_cmd_t ili_sleep_cmds[] = {
-    {TFT_CMD_SWRESET, {0}, 0x80},
-    {TFT_CMD_DISPLAY_OFF, {0}, 0x80},
-    {TFT_CMD_SLEEP, {0}, 0x80},
-    {0, {0}, 0xff}
-};
+// static const ili_init_cmd_t ili_sleep_cmds[] = {
+//     {TFT_CMD_SWRESET, {0}, 0x80},
+//     {TFT_CMD_DISPLAY_OFF, {0}, 0x80},
+//     {TFT_CMD_SLEEP, {0}, 0x80},
+//     {0, {0}, 0xff}
+// };
 
 
 // 2.4" LCD
@@ -252,7 +252,7 @@ static void backlight_init()
   ledc_timer_config_t ledc_timer;
 	memset(&ledc_timer, 0, sizeof(ledc_timer));
 
-  ledc_timer.bit_num = LEDC_TIMER_13_BIT; //set timer counter bit number
+  ledc_timer.duty_resolution = LEDC_TIMER_13_BIT; //set timer counter bit number
   ledc_timer.freq_hz = 5000;              //set frequency of pwm
   ledc_timer.speed_mode = LEDC_LOW_SPEED_MODE;   //timer mode,
   ledc_timer.timer_num = LEDC_TIMER_0;    //timer index
