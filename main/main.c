@@ -33,6 +33,10 @@
 #define ESP_PARTITION_TABLE_MAX_LEN 0xC00 /* Maximum length of partition table data */
 #define ESP_PARTITION_TABLE_MAX_ENTRIES (ESP_PARTITION_TABLE_MAX_LEN / sizeof(esp_partition_info_t)) /* Maximum length of partition table data, including terminating entry */
 
+#ifndef PROJECT_VER
+    #define PROJECT_VER "n/a"
+#endif
+
 #define PART_SUBTYPE_FACTORY 0x00
 #define PART_SUBTYPE_FACTORY_DATA 0xFE
 
@@ -55,16 +59,6 @@
 #define APP_NVS_SIZE 0x3000
 
 #define NVS_PART_NAME "nvs_fw"
-
-#ifndef COMPILEDATE
-#define COMPILEDATE __DATE__
-#endif
-
-#ifndef GITREV
-#define GITREV "src"
-#endif
-
-#define VERSION COMPILEDATE "-" GITREV
 
 #define FIRMWARE_HEADER_SIZE (24)
 #define FIRMWARE_DESCRIPTION_SIZE (40)
@@ -1323,7 +1317,7 @@ static void ui_draw_dialog(dialog_option_t *options, int optionCount, int curren
     UG_SetForecolor(C_GRAY);
     UG_SetBackcolor(C_WHITE);
     UG_FontSelect(&FONT_8X8);
-    UG_PutString(left + 2, top + 2, "Multi-firmware build:\n " VERSION);
+    UG_PutString(left + 2, top + 2, "Multi-firmware build:\n " PROJECT_VER);
 
     UpdateDisplay();
 }
@@ -1433,7 +1427,7 @@ void ui_choose_app()
 	        }
 	        else if (btn == ODROID_INPUT_A)
 	        {
-                ui_draw_title("ODROID-GO", VERSION);
+                ui_draw_title("ODROID-GO", PROJECT_VER);
                 DisplayMessage("Updating partitions ...");
 
                 odroid_app_t *app = &apps[currentItem];
@@ -1532,7 +1526,7 @@ void ui_choose_app()
 
 void app_main(void)
 {
-    printf("\n\n#################### odroid-go-firmware (Ver: "VERSION") ####################\n\n");
+    printf("\n\n#################### odroid-go-firmware (Ver: "PROJECT_VER") ####################\n\n");
 
     // Init NVS
     nvs_flash_init_partition(NVS_PART_NAME);
