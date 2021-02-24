@@ -5011,7 +5011,7 @@ void UG_DrawLine( UG_S16 x1, UG_S16 y1, UG_S16 x2, UG_S16 y2, UG_COLOR c )
    }  
 }
 
-void UG_PutString( UG_S16 x, UG_S16 y, char* str )
+void UG_PutString( UG_S16 x, UG_S16 y, const char* str )
 {
    UG_S16 xp,yp;
    UG_U8 cw;

@@ -1,20 +1,24 @@
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_wifi.h"
-#include "esp_system.h"
-#include "esp_event.h"
-#include "esp_event_loop.h"
-#include "nvs_flash.h"
-#include "nvs.h"
-#include "driver/gpio.h"
-#include "driver/adc.h"
-#include "esp_adc_cal.h"
-#include "esp_partition.h"
-#include "esp_ota_ops.h"
-#include "esp_heap_caps.h"
-#include "esp_flash_data_types.h"
-#include "esp_log.h"
-#include "rom/crc.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <esp_system.h>
+#include <esp_event.h>
+#include <esp_adc_cal.h>
+#include <esp_partition.h>
+#include <esp_ota_ops.h>
+#include <esp_heap_caps.h>
+#include <esp_flash_data_types.h>
+// #include <esp_idf_version.h>
+#include <esp_log.h>
+#include <nvs_flash.h>
+#include <nvs.h>
+#include <driver/gpio.h>
+#include <driver/adc.h>
+
+#if defined(ESP_IDF_VERSION_MAJOR) && ESP_IDF_VERSION_MAJOR >= 4
+#include <esp32/rom/crc.h>
+#else
+#include <rom/crc.h>
+#endif
 
 #include <string.h>
 #include <strings.h>
@@ -241,9 +245,9 @@ static void ui_draw_image(short x, short y, short width, short height, uint16_t*
 
 static void ui_draw_title(char*, char*);
 
-static void ClearScreen()
-{
-}
+// static void ClearScreen()
+// {
+// }
 
 static void UpdateDisplay()
 {

@@ -303,8 +303,6 @@ void backlight_deinit()
 
 void ili9341_write_frame(uint16_t* buffer)
 {
-    short x, y;
-
     if (buffer == NULL)
     {
         // clear the buffer
@@ -313,7 +311,7 @@ void ili9341_write_frame(uint16_t* buffer)
         // clear the screen
         send_reset_drawing(0, 0, 320, 240);
 
-        for (y = 0; y < 240; ++y)
+        for (int y = 0; y < 240; ++y)
         {
             send_continue_line(line[0], 320, 1);
         }
@@ -326,7 +324,7 @@ void ili9341_write_frame(uint16_t* buffer)
 
         send_reset_drawing(0, 0, displayWidth, displayHeight);
 
-        for (y = 0; y < displayHeight; y += 4)
+        for (int y = 0; y < displayHeight; y += 4)
         {
             send_continue_line(buffer + y * displayWidth, displayWidth, 4);
         }
@@ -335,8 +333,6 @@ void ili9341_write_frame(uint16_t* buffer)
 
 void ili9341_write_frame_rectangle(short left, short top, short width, short height, uint16_t* buffer)
 {
-    short x, y;
-
     if (left < 0 || top < 0) abort();
     if (width < 1 || height < 1) abort();
 
@@ -348,7 +344,7 @@ void ili9341_write_frame_rectangle(short left, short top, short width, short hei
         memset(line[0], 0x00, 320 * sizeof(uint16_t));
 
         // clear the screen
-        for (y = 0; y < height; ++y)
+        for (int y = 0; y < height; ++y)
         {
             send_continue_line(line[0], width, 1);
         }
@@ -356,7 +352,7 @@ void ili9341_write_frame_rectangle(short left, short top, short width, short hei
     else
     {
         short alt = 0;
-        for (y = 0; y < height; y++)
+        for (int y = 0; y < height; y++)
         {
             memcpy(line[alt], buffer + y * width, width * sizeof(uint16_t));
             send_continue_line(line[alt], width, 1);
@@ -386,8 +382,6 @@ void ili9341_clear(uint16_t color)
 
 void ili9341_write_frame_rectangleLE(short left, short top, short width, short height, uint16_t* buffer)
 {
-    short x, y;
-
     if (left < 0 || top < 0) abort();
     if (width < 1 || height < 1) abort();
 
@@ -399,7 +393,7 @@ void ili9341_write_frame_rectangleLE(short left, short top, short width, short h
         memset(line[0], 0x00, 320 * sizeof(uint16_t));
 
         // clear the screen
-        for (y = 0; y < height; ++y)
+        for (int y = 0; y < height; ++y)
         {
             send_continue_line(line[0], width, 1);
         }
@@ -407,7 +401,7 @@ void ili9341_write_frame_rectangleLE(short left, short top, short width, short h
     else
     {
         short alt = 0;
-        for (y = 0; y < height; y++)
+        for (int y = 0; y < height; y++)
         {
             //memcpy(line[alt], buffer + y * width, width * sizeof(uint16_t));
             for (int i = 0; i < width; ++i)
