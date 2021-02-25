@@ -1470,7 +1470,8 @@ void ui_choose_app()
                 {1, "Erase selected app", apps_count > 0},
                 {2, "Erase selected NVS", apps_count > 0},
                 {3, "Erase all apps", apps_count > 0},
-                {4, "Restart System", true}
+                // {4, "Format SD Card", true},
+                {5, "Restart System", true}
             };
 
             int choice = ui_choose_dialog(options, 5, true);
@@ -1507,7 +1508,9 @@ void ui_choose_app()
                     write_app_table();
                     write_partition_table(NULL, 0, 0);
                     break;
-                case 4: // Restart
+                case 4: // Format SD Card
+                    break;
+                case 5: // Restart
                     cleanup_and_restart();
                     break;
             }
