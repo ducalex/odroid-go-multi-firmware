@@ -5,6 +5,7 @@
 #include <driver/sdmmc_host.h>
 #include <driver/sdspi_host.h>
 #include <sdmmc_cmd.h>
+#include <diskio.h>
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 
@@ -21,7 +22,6 @@
 
 
 static bool isOpen = false;
-
 
 
 inline static void swap(char** a, char** b)
@@ -75,7 +75,6 @@ static void sort_files(char** files, int count)
         quick_sort(files, 0, count - 1);
     }
 }
-
 
 
 int odroid_sdcard_files_get(const char* path, const char* extension, char*** filesOut)
@@ -216,7 +215,6 @@ esp_err_t odroid_sdcard_open(const char* base_path)
 	return ret;
 }
 
-
 esp_err_t odroid_sdcard_close()
 {
     esp_err_t ret;
@@ -230,15 +228,18 @@ esp_err_t odroid_sdcard_close()
     {
         ret = esp_vfs_fat_sdmmc_unmount();
 
-        if (ret != ESP_OK)
+        if (ret == ESP_OK)
+        {
+            isOpen = false;
+    	}
+        else
         {
             ESP_LOGE(__func__, "esp_vfs_fat_sdmmc_unmount failed (%d)", ret);
-    	}
+        }
     }
 
     return ret;
 }
-
 
 size_t odroid_sdcard_get_filesize(const char* path)
 {
@@ -307,4 +308,88 @@ size_t odroid_sdcard_copy_file_to_memory(const char* path, void* ptr)
     }
 
     return ret;
+}
+
+esp_err_t odroid_sdcard_format(int fs_type)
+{
+    esp_err_t err = ESP_FAIL;
+    const char *errmsg = "success!";
+    sdmmc_card_t card;
+    void *buffer = malloc(4096);
+    DWORD partitions[] = {100, 0, 0, 0};
+    BYTE drive = 0xFF;
+
+    sdmmc_host_t host_config = SDSPI_HOST_DEFAULT();
+    host_config.slot = HSPI_HOST;
+
+    sdspi_slot_config_t slot_config = SDSPI_SLOT_CONFIG_DEFAULT();
+    slot_config.gpio_miso = (gpio_num_t)SD_PIN_NUM_MISO;
+    slot_config.gpio_mosi = (gpio_num_t)SD_PIN_NUM_MOSI;
+    slot_config.gpio_sck  = (gpio_num_t)SD_PIN_NUM_CLK;
+    slot_config.gpio_cs = (gpio_num_t)SD_PIN_NUM_CS;
+
+    if (buffer == NULL) {
+        return false;
+    }
+
+    if (isOpen) {
+        odroid_sdcard_close();
+    }
+
+    err = ff_diskio_get_drive(&drive);
+    if (drive == 0xFF) {
+        errmsg = "ff_diskio_get_drive() failed";
+        goto _cleanup;
+    }
+
+    err = (*host_config.init)();
+    if (err != ESP_OK) {
+        errmsg = "host_config.init() failed";
+        goto _cleanup;
+    }
+
+    err = sdspi_host_init_slot(host_config.slot, &slot_config);
+    if (err != ESP_OK) {
+        errmsg = "sdspi_host_init_slot() failed";
+        goto _cleanup;
+    }
+
+    err = sdmmc_card_init(&host_config, &card);
+    if (err != ESP_OK) {
+        errmsg = "sdmmc_card_init() failed";
+        goto _cleanup;
+    }
+
+    ff_diskio_register_sdmmc(drive, &card);
+
+    ESP_LOGI(__func__, "partitioning card %d", drive);
+    if (f_fdisk(drive, partitions, buffer) != FR_OK) {
+        errmsg = "f_fdisk() failed";
+        err = ESP_FAIL;
+        goto _cleanup;
+    }
+
+    ESP_LOGI(__func__, "formatting card %d", drive);
+    char path[3] = {(char)('0' + drive), ':', 0};
+    if (f_mkfs(path, fs_type ? FM_EXFAT : FM_FAT32, 0, buffer, 4096) != FR_OK) {
+        errmsg = "f_mkfs() failed";
+        err = ESP_FAIL;
+        goto _cleanup;
+    }
+
+    err = ESP_OK;
+
+_cleanup:
+
+    if (err == ESP_OK) {
+        ESP_LOGI(__func__, "%s", errmsg);
+    } else {
+        ESP_LOGE(__func__, "%s (%d)", errmsg, err);
+    }
+
+    free(buffer);
+    host_config.deinit();
+    ff_diskio_unregister(drive);
+
+    return err;
 }

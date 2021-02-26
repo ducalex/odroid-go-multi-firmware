@@ -14,12 +14,10 @@ _Note: There is no risk in flashing your Odroid GO and you can easily return to 
 
 
 # Compilation
-The official esp-idf version 3.1 or newer is required and you need to apply the following patches:
+The official esp-idf version 3.1 or newer is required and you need to apply the following patches (found in tools/patches):
 
-- [Allow clearing internal partition list](https://github.com/OtherCrashOverride/esp-idf/commit/49fbef73c300920d2f63c9afb705eefabe3dac87) (Required)
-- [Improve SD card compatibility](https://github.com/OtherCrashOverride/esp-idf/commit/a83e557538a033e25c376eedac79663c9b7b75da) (Recommended)
-
-You can also find the patches in the tools/patches folder.
+- esp-idf-partition-patch.diff
+- esp-idf-sdcard-patch.diff
 
 _Note: Those patches do not introduce breaking changes to non-GO (standard ESP32) projects and can safely be applied to your global esp-idf installation._
 

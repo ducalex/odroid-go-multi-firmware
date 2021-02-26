@@ -20,6 +20,7 @@
 #include <rom/crc.h>
 #endif
 
+#include <sys/stat.h>
 #include <string.h>
 #include <strings.h>
 #include <stdlib.h>
@@ -56,7 +57,8 @@
 #define APP_SORT_DIR_ASC     0b0000
 #define APP_SORT_DIR_DESC    0b0001
 
-#define FLASH_SIZE (16 * 1024 * 1024)
+// #define FLASH_SIZE (16 * 1024 * 1024)
+#define FLASH_SIZE ((int)spi_flash_get_chip_size())
 #define FLASH_BLOCK_SIZE (64 * 1024)
 #define ERASE_BLOCK_SIZE (4 * 1024)
 
@@ -77,8 +79,8 @@
 #define LED_ON() gpio_set_level(GPIO_NUM_2, 1);
 #define LED_OFF() gpio_set_level(GPIO_NUM_2, 0);
 
-const char* SD_CARD = "/sd";
-const char* FIRMWARE_PATH = "/sd/odroid/firmware";
+#define SD_CARD "/sd"
+#define FIRMWARE_PATH "/sd/odroid/firmware"
 
 //const char* HEADER = "ODROIDGO_FIRMWARE_V00_00";
 const char* HEADER_V00_01 = "ODROIDGO_FIRMWARE_V00_01";
@@ -280,7 +282,7 @@ static void DisplayMessage(char* message)
     UpdateDisplay();
 }
 
-static void DisplayNotification(char* message)
+static void DisplayNotification(const char* message)
 {
     UG_FontSelect(&FONT_8X12);
     short left = (320 / 2) - (strlen(message) * 9 / 2);
@@ -1470,11 +1472,11 @@ void ui_choose_app()
                 {1, "Erase selected app", apps_count > 0},
                 {2, "Erase selected NVS", apps_count > 0},
                 {3, "Erase all apps", apps_count > 0},
-                // {4, "Format SD Card", true},
+                {4, "Format SD Card", true},
                 {5, "Restart System", true}
             };
 
-            int choice = ui_choose_dialog(options, 5, true);
+            int choice = ui_choose_dialog(options, 6, true);
             char* fileName;
 
             switch(choice) {
@@ -1509,6 +1511,26 @@ void ui_choose_app()
                     write_partition_table(NULL, 0, 0);
                     break;
                 case 4: // Format SD Card
+                    ui_draw_title("Format SD Card", PROJECT_VER);
+                    DisplayMessage("Press start to begin");
+                    if (wait_for_button_press(50000) != ODROID_INPUT_START) {
+                        break;
+                    }
+                    DisplayMessage("Formatting... (be patient)");
+                    sdcardret = odroid_sdcard_format(0);
+                    if (sdcardret == ESP_OK) {
+                        sdcardret = odroid_sdcard_open(SD_CARD);
+                    }
+                    if (sdcardret == ESP_OK) {
+                        char path[32] = SD_CARD "/odroid";
+                        mkdir(path, 0777);
+                        strcat(path, "/firmware");
+                        mkdir(path, 0777);
+                        DisplayMessage("Card formatted!");
+                    } else {
+                        DisplayError("Format failed!");
+                    }
+                    wait_for_button_press(50000);
                     break;
                 case 5: // Restart
                     cleanup_and_restart();
