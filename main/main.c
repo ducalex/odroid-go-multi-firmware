@@ -19,7 +19,6 @@
 #include <rom/crc.h>
 #endif
 
-#include <sys/stat.h>
 #include <string.h>
 #include <strings.h>
 #include <stdlib.h>
@@ -31,7 +30,7 @@
 
 extern void esp_partition_reload_table(void);
 
-#include "../components/ugui/ugui.h"
+#include "ugui/ugui.h"
 
 #define ALIGN_ADDRESS(val, alignment) (((val & (alignment-1)) != 0) ? (val & ~(alignment-1)) + alignment : val)
 
@@ -46,9 +45,6 @@ extern void esp_partition_reload_table(void);
 #define PART_SUBTYPE_FACTORY 0x00
 #define PART_SUBTYPE_FACTORY_DATA 0xFE
 
-#define TILE_WIDTH (86)
-#define TILE_HEIGHT (48)
-
 #define APP_MAGIC 0x1207
 
 #define APP_SORT_OFFSET      0b0000
@@ -58,31 +54,26 @@ extern void esp_partition_reload_table(void);
 #define APP_SORT_DIR_ASC     0b0000
 #define APP_SORT_DIR_DESC    0b0001
 
-#define FLASH_SIZE ((int)spi_flash_get_chip_size())
 #define FLASH_BLOCK_SIZE (64 * 1024)
 #define ERASE_BLOCK_SIZE (4 * 1024)
 
 #define APP_NVS_SIZE 0x3000
 
-#define NVS_PART_NAME "nvs_fw"
-
 #define FIRMWARE_HEADER_SIZE (24)
 #define FIRMWARE_DESCRIPTION_SIZE (40)
 #define FIRMWARE_PARTS_MAX (20)
-#define FIRMWARE_TILE_SIZE (TILE_WIDTH * TILE_HEIGHT)
+#define FIRMWARE_TILE_WIDTH (86)
+#define FIRMWARE_TILE_HEIGHT (48)
+
+#define FIRMWARE_PATH SDCARD_BASE_PATH "/odroid/firmware"
 
 #define BATTERY_VMAX 420
 #define BATTERY_VMIN 330
 
 #define ITEM_COUNT (4)
 
-#define LED_ON() gpio_set_level(GPIO_NUM_2, 1);
-#define LED_OFF() gpio_set_level(GPIO_NUM_2, 0);
+#define SET_STATUS_LED(on) gpio_set_level(GPIO_NUM_2, on);
 
-#define SD_CARD "/sd"
-#define FIRMWARE_PATH SD_CARD "/odroid/firmware"
-
-//const char* HEADER = "ODROIDGO_FIRMWARE_V00_00";
 const char* HEADER_V00_01 = "ODROIDGO_FIRMWARE_V00_01";
 
 extern const esp_app_desc_t esp_app_desc;
@@ -113,7 +104,7 @@ typedef struct
     uint32_t endOffset;
     char     description[FIRMWARE_DESCRIPTION_SIZE];
     char     filename[FIRMWARE_DESCRIPTION_SIZE];
-    uint16_t tile[FIRMWARE_TILE_SIZE];
+    uint16_t tile[FIRMWARE_TILE_WIDTH * FIRMWARE_TILE_HEIGHT];
     odroid_partition_t parts[FIRMWARE_PARTS_MAX];
     uint8_t parts_count;
     uint8_t _reserved0;
@@ -124,7 +115,7 @@ typedef struct
 {
     char header[FIRMWARE_HEADER_SIZE];
     char description[FIRMWARE_DESCRIPTION_SIZE];
-    uint16_t tile[FIRMWARE_TILE_SIZE];
+    uint16_t tile[FIRMWARE_TILE_WIDTH * FIRMWARE_TILE_HEIGHT];
 } odroid_fw_header_t;
 
 typedef struct
@@ -166,7 +157,7 @@ static int startFlashAddress = -1;
 static odroid_fw_t *fwInfoBuffer;
 static uint8_t *dataBuffer;
 
-static uint16_t fb[320 * 240];
+static uint16_t fb[SCREEN_WIDTH * SCREEN_HEIGHT];
 static UG_GUI gui;
 static char tempstring[512];
 
@@ -217,7 +208,7 @@ void indicate_error()
 {
     int level = 0;
     while (true) {
-        gpio_set_level(GPIO_NUM_2, level);
+        SET_STATUS_LED(level);
         level = !level;
         vTaskDelay(100 / portTICK_PERIOD_MS);
     }
@@ -225,12 +216,7 @@ void indicate_error()
 
 static void pset(UG_S16 x, UG_S16 y, UG_COLOR color)
 {
-    fb[y * 320 + x] = color;
-}
-
-static void ui_update_display()
-{
-    ili9341_write_rectangle(0, 0, 320, 240, fb);
+    fb[y * SCREEN_WIDTH + x] = color;
 }
 
 static void ui_draw_image(short x, short y, short width, short height, uint16_t* data)
@@ -247,20 +233,16 @@ static void ui_draw_image(short x, short y, short width, short height, uint16_t*
 
 static void ui_draw_title(char*, char*);
 
-// static void ClearScreen()
-// {
-// }
-
 static void UpdateDisplay()
 {
-    ui_update_display();
+    ili9341_write_rectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, fb);
 }
 
-static void DisplayError(char* message)
+static void DisplayError(const char *message)
 {
     UG_FontSelect(&FONT_8X12);
-    short left = (320 / 2) - (strlen(message) * 9 / 2);
-    short top = (240 / 2) - (12 / 2);
+    short left = (SCREEN_WIDTH / 2) - (strlen(message) * 9 / 2);
+    short top = (SCREEN_HEIGHT / 2) - (12 / 2);
     UG_SetForecolor(C_RED);
     UG_SetBackcolor(C_WHITE);
     UG_FillFrame(0, top, 319, top + 12, C_WHITE);
@@ -269,11 +251,11 @@ static void DisplayError(char* message)
     UpdateDisplay();
 }
 
-static void DisplayMessage(char* message)
+static void DisplayMessage(const char *message)
 {
     UG_FontSelect(&FONT_8X12);
-    short left = (320 / 2) - (strlen(message) * 9 / 2);
-    short top = (240 / 2) + 8 + (12 / 2) + 16;
+    short left = (SCREEN_WIDTH / 2) - (strlen(message) * 9 / 2);
+    short top = (SCREEN_HEIGHT / 2) + 8 + (12 / 2) + 16;
     UG_SetForecolor(C_BLACK);
     UG_SetBackcolor(C_WHITE);
     UG_FillFrame(0, top, 319, top + 12, C_WHITE);
@@ -285,7 +267,7 @@ static void DisplayMessage(char* message)
 static void DisplayNotification(const char* message)
 {
     UG_FontSelect(&FONT_8X12);
-    short left = (320 / 2) - (strlen(message) * 9 / 2);
+    short left = (SCREEN_WIDTH / 2) - (strlen(message) * 9 / 2);
     short top = 239 - 16;
     UG_SetForecolor(C_WHITE);
     UG_SetBackcolor(C_BLUE);
@@ -302,8 +284,8 @@ static void DisplayProgress(int percent)
     const int HEIGHT = 12;
     const int FILL_WIDTH = WIDTH * (percent / 100.0f);
 
-    short left = (320 / 2) - (WIDTH / 2);
-    short top = (240 / 2) - (HEIGHT / 2) + 16;
+    short left = (SCREEN_WIDTH / 2) - (WIDTH / 2);
+    short top = (SCREEN_HEIGHT / 2) - (HEIGHT / 2) + 16;
     UG_FillFrame(left - 1, top - 1, left + WIDTH + 1, top + HEIGHT + 1, C_WHITE);
     UG_DrawFrame(left - 1, top - 1, left + WIDTH + 1, top + HEIGHT + 1, C_BLACK);
 
@@ -318,8 +300,8 @@ static void DisplayProgress(int percent)
 static void DisplayFooter(char* message)
 {
     UG_FontSelect(&FONT_8X12);
-    short left = (320 / 2) - (strlen(message) * 9 / 2);
-    short top = 240 - (16 * 2) - 8;
+    short left = (SCREEN_WIDTH / 2) - (strlen(message) * 9 / 2);
+    short top = SCREEN_HEIGHT - (16 * 2) - 8;
     UG_SetForecolor(C_BLACK);
     UG_SetBackcolor(C_WHITE);
     UG_FillFrame(0, top, 319, top + 12, C_WHITE);
@@ -331,7 +313,7 @@ static void DisplayFooter(char* message)
 static void DisplayHeader(char* message)
 {
     UG_FontSelect(&FONT_8X12);
-    short left = (320 / 2) - (strlen(message) * 9 / 2);
+    short left = (SCREEN_WIDTH / 2) - (strlen(message) * 9 / 2);
     short top = (16 + 8);
     UG_SetForecolor(C_BLACK);
     UG_SetBackcolor(C_WHITE);
@@ -343,18 +325,18 @@ static void DisplayHeader(char* message)
 
 static void DisplayTile(uint16_t *tileData)
 {
-    const uint16_t tileLeft = (320 / 2) - (TILE_WIDTH / 2);
+    const uint16_t tileLeft = (SCREEN_WIDTH / 2) - (FIRMWARE_TILE_WIDTH / 2);
     const uint16_t tileTop = (16 + 16 + 16);
-    ui_draw_image(tileLeft, tileTop, TILE_WIDTH, TILE_HEIGHT, tileData);
+    ui_draw_image(tileLeft, tileTop, FIRMWARE_TILE_WIDTH, FIRMWARE_TILE_HEIGHT, tileData);
 
     // Tile border
-    UG_DrawFrame(tileLeft - 1, tileTop - 1, tileLeft + TILE_WIDTH, tileTop + TILE_HEIGHT, C_BLACK);
+    UG_DrawFrame(tileLeft - 1, tileTop - 1, tileLeft + FIRMWARE_TILE_WIDTH, tileTop + FIRMWARE_TILE_HEIGHT, C_BLACK);
     UpdateDisplay();
 }
 
 
 //---------------
-void cleanup_and_restart()
+void cleanup_and_restart(void)
 {
     // Turn off LED pin
     gpio_set_direction(GPIO_NUM_2, GPIO_MODE_INPUT);
@@ -368,13 +350,13 @@ void cleanup_and_restart()
 
     // Close NVS
     nvs_close(nvs_h);
-    nvs_flash_deinit_partition(NVS_PART_NAME);
+    nvs_flash_deinit();
 
     esp_restart();
 }
 
 
-void boot_application()
+void boot_application(void)
 {
     ESP_LOGI(__func__, "Booting application.");
 
@@ -446,14 +428,12 @@ static void sort_app_table(int newMode)
 }
 
 
-static void read_app_table()
+static void read_app_table(void)
 {
     const esp_partition_t *app_table_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
                                                                      PART_SUBTYPE_FACTORY_DATA, NULL);
 
-    if (!app_table_part) {
-        abort();
-    }
+    assert(app_table_part);
 
     startFlashAddress = app_table_part->address + app_table_part->size;
 
@@ -664,7 +644,7 @@ void defrag_flash()
     {
         if (apps[i].startOffset > nextStartOffset)
         {
-            LED_ON();
+            SET_STATUS_LED(1);
 
             size_t app_size = apps[i].endOffset - apps[i].startOffset;
             size_t newOffset = nextStartOffset, oldOffset = apps[i].startOffset;
@@ -690,7 +670,7 @@ void defrag_flash()
             apps[i].startOffset = newOffset;
             apps[i].endOffset = newOffset + app_size;
 
-            LED_OFF();
+            SET_STATUS_LED(0);
         }
 
         nextStartOffset = apps[i].endOffset + 1;
@@ -702,6 +682,7 @@ void defrag_flash()
 
 void find_free_blocks(odroid_flash_block_t **blocks, size_t *count, size_t *totalFreeSpace)
 {
+    size_t flashSize = spi_flash_get_chip_size();
     size_t previousBlockEnd = startFlashAddress;
 
     (*blocks) = malloc(sizeof(odroid_flash_block_t) * 32);
@@ -726,10 +707,10 @@ void find_free_blocks(odroid_flash_block_t **blocks, size_t *count, size_t *tota
         previousBlockEnd = apps[i].endOffset + 1;
     }
 
-    if ((FLASH_SIZE - previousBlockEnd) > 0) {
+    if (((int)flashSize - previousBlockEnd) > 0) {
         odroid_flash_block_t *block = &(*blocks)[(*count)++];
         block->offset = previousBlockEnd;
-        block->size = (FLASH_SIZE - previousBlockEnd);
+        block->size = (flashSize - previousBlockEnd);
         (*totalFreeSpace) += block->size;
         ESP_LOGI(__func__, "Found free block: end 0x%x %d", block->offset, block->size / 1024);
     }
@@ -864,7 +845,7 @@ void flash_utility()
 void flash_firmware(const char* fullPath)
 {
     ESP_LOGD(__func__, "HEAP=%#010x", esp_get_free_heap_size());
-    LED_OFF();
+    SET_STATUS_LED(0);
 
     size_t count;
     bool can_proceed = true;
@@ -899,7 +880,7 @@ void flash_firmware(const char* fullPath)
 
     strncpy(app->description, fw->fileHeader.description, FIRMWARE_DESCRIPTION_SIZE-1);
     strncpy(app->filename, strrchr(fullPath, '/'), FIRMWARE_DESCRIPTION_SIZE-1);
-    memcpy(app->tile, fw->fileHeader.tile, FIRMWARE_TILE_SIZE * 2);
+    memcpy(app->tile, fw->fileHeader.tile, sizeof(app->tile));
     memcpy(app->parts, fw->parts, sizeof(app->parts));
     app->parts_count = fw->parts_count;
 
@@ -935,7 +916,7 @@ void flash_firmware(const char* fullPath)
         }
     }
 
-    LED_ON();
+    SET_STATUS_LED(1);
 
     DisplayMessage("Verifying ...");
     DisplayFooter("");
@@ -960,13 +941,14 @@ void flash_firmware(const char* fullPath)
         if (count < FLASH_BLOCK_SIZE) break;
     }
 
-    ESP_LOGI(__func__, "Computed checksum: %#010x", checksum);
-
     if (checksum != fw->checksum)
     {
+        ESP_LOGE(__func__, "Checksum mismatch: expected: %#010x, computed:%#010x", fw->checksum, checksum);
         DisplayError("CHECKSUM MISMATCH ERROR");
         indicate_error();
     }
+
+    ESP_LOGI(__func__, "Checksum OK: %#010x", checksum);
 
     // restore location to end of description
     fseek(file, fw->dataOffset, SEEK_SET);
@@ -982,11 +964,12 @@ void flash_firmware(const char* fullPath)
         // Skip header, firmware_get_info prepared everything for us
         fseek(file, sizeof(odroid_partition_t), SEEK_CUR);
 
-        LED_OFF();
+        SET_STATUS_LED(0);
 
         // Erase target partition space
-        ESP_LOGI(__func__, "Erasing ... (%d)", i);
         sprintf(tempstring, "Erasing ... (%d/%d)", i+1, app->parts_count);
+        ESP_LOGI(__func__, "%s", tempstring);
+
         DisplayProgress(0);
         DisplayMessage(tempstring);
 
@@ -1005,15 +988,14 @@ void flash_firmware(const char* fullPath)
         {
             size_t nextEntry = ftell(file) + slot->dataLength;
 
-            LED_ON();
+            SET_STATUS_LED(1);
 
             // Write data
             int totalCount = 0;
             for (int offset = 0; offset < slot->dataLength; offset += FLASH_BLOCK_SIZE)
             {
-                ESP_LOGI(__func__, "Writing (%d) at %#08x", i, offset);
-
                 sprintf(tempstring, "Writing (%d/%d)", i+1, app->parts_count);
+                ESP_LOGI(__func__, "%s", tempstring);
                 DisplayProgress((float)offset / (float)(slot->dataLength - FLASH_BLOCK_SIZE) * 100.0f);
                 DisplayMessage(tempstring);
 
@@ -1042,7 +1024,7 @@ void flash_firmware(const char* fullPath)
                 totalCount += count;
             }
 
-            LED_OFF();
+            SET_STATUS_LED(0);
 
             if (totalCount != slot->dataLength)
             {
@@ -1097,7 +1079,7 @@ static void ui_draw_title(char* TITLE, char* FOOTER)
     // Header
     UG_FillFrame(0, 0, 319, 15, C_MIDNIGHT_BLUE);
     UG_FontSelect(&FONT_8X8);
-    const short titleLeft = (320 / 2) - (strlen(TITLE) * 9 / 2);
+    const short titleLeft = (SCREEN_WIDTH / 2) - (strlen(TITLE) * 9 / 2);
     UG_SetForecolor(C_WHITE);
     UG_SetBackcolor(C_MIDNIGHT_BLUE);
     UG_PutString(titleLeft, 4, TITLE);
@@ -1107,8 +1089,8 @@ static void ui_draw_title(char* TITLE, char* FOOTER)
     UG_SetBackcolor(C_MIDNIGHT_BLUE);
     UG_SetForecolor(C_LIGHT_GRAY);
     UG_FillFrame(0, 239 - 16, 319, 239, C_MIDNIGHT_BLUE);
-    const short footerLeft = (320 / 2) - (strlen(FOOTER) * 9 / 2);
-    UG_PutString(footerLeft, 240 - 4 - 8, FOOTER);
+    const short footerLeft = (SCREEN_WIDTH / 2) - (strlen(FOOTER) * 9 / 2);
+    UG_PutString(footerLeft, SCREEN_HEIGHT - 4 - 8, FOOTER);
 }
 
 
@@ -1123,21 +1105,21 @@ static void ui_draw_indicators(int page, int totalPages)
 
     // Battery indicator
     sprintf(tempstring, "%d%%", batteryPercent);
-    UG_PutString(320 - (9 * strlen(tempstring)) - 4, 4, tempstring);
+    UG_PutString(SCREEN_WIDTH - (9 * strlen(tempstring)) - 4, 4, tempstring);
 }
 
 
 static void ui_draw_row(int line, char *line1, char* line2, uint16_t color, uint16_t *tile, bool selected)
 {
-    const int innerHeight = 240 - (16 * 2); // 208
-    const int itemHeight = innerHeight / ITEM_COUNT; // 52
+    const int innerHeight = SCREEN_HEIGHT - (16 * 2);
+    const int itemHeight = innerHeight / ITEM_COUNT;
 
-    const int rightWidth = (213); // 320 * (2.0 / 3.0)
-    const int leftWidth = 320 - rightWidth;
+    const int rightWidth = SCREEN_WIDTH * (2.0 / 3.0);
+    const int leftWidth = SCREEN_WIDTH - rightWidth;
 
     // Tile width = 86, height = 48 (16:9)
     const short imageLeft = (leftWidth / 2) - (86 / 2);
-    const short textLeft = 320 - rightWidth;
+    const short textLeft = SCREEN_WIDTH - rightWidth;
 
     short top = 16 + (line * itemHeight) - 1;
 
@@ -1146,7 +1128,7 @@ static void ui_draw_row(int line, char *line1, char* line2, uint16_t color, uint
     UG_SetBackcolor(selected ? C_YELLOW : C_WHITE);
     UG_FillFrame(0, top + 2, 319, top + itemHeight - 1 - 1, UG_GetBackcolor());
 
-    ui_draw_image(imageLeft, top + 2, TILE_WIDTH, TILE_HEIGHT, tile);
+    ui_draw_image(imageLeft, top + 2, FIRMWARE_TILE_WIDTH, FIRMWARE_TILE_HEIGHT, tile);
 
     UG_SetForecolor(C_BLACK);
     UG_PutString(textLeft, top + 2 + 2 + 7, line1);
@@ -1186,12 +1168,11 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
         if (!fileName) abort();
 
         sprintf(tempstring, "%s/%s", FIRMWARE_PATH, fileName);
-        bool valid = firmware_get_info(tempstring, fwInfoBuffer);
 
         strcpy(line1, fileName);
         line1[strlen(fileName) - 3] = 0; // ".fw" = 3
 
-        if (valid) {
+        if (firmware_get_info(tempstring, fwInfoBuffer)) {
             color = C_GRAY;
             sprintf(line2, "%.2f MB", (float)fwInfoBuffer->flashSize / 1024 / 1024);
         } else {
@@ -1219,14 +1200,12 @@ char* ui_choose_file(const char* path)
         return NULL;
     }
 
-    char* result = NULL;
-
-    char** files = NULL;
+    char **files = NULL;
+    char *result = NULL;
     int fileCount = odroid_sdcard_files_get(path, ".fw", &files);
-    ESP_LOGI(__func__, "fileCount=%d", fileCount);
-
-    // Selection
     int currentItem = 0;
+
+    ESP_LOGI(__func__, "fileCount=%d", fileCount);
 
     while (true)
     {
@@ -1293,8 +1272,8 @@ static void ui_draw_dialog(dialog_option_t *options, int optionCount, int curren
     int itemHeight = 20;
     int width = itemWidth + (border * 2);
     int height = ((optionCount+1) * itemHeight) + (border *  2);
-    int top = (240 - height) / 2;
-    int left  = (320 - width) / 2;
+    int top = (SCREEN_HEIGHT - height) / 2;
+    int left  = (SCREEN_WIDTH - width) / 2;
 
     UG_FillFrame(left, top, left + width, top + height, C_BLUE);
     UG_FillFrame(left + border, top + border, left + width - border, top + height - border, C_WHITE);
@@ -1519,10 +1498,10 @@ void ui_choose_app()
                     DisplayMessage("Formatting... (be patient)");
                     sdcardret = odroid_sdcard_format(0);
                     if (sdcardret == ESP_OK) {
-                        sdcardret = odroid_sdcard_open(SD_CARD);
+                        sdcardret = odroid_sdcard_open();
                     }
                     if (sdcardret == ESP_OK) {
-                        char path[32] = SD_CARD "/odroid";
+                        char path[32] = SDCARD_BASE_PATH "/odroid";
                         mkdir(path, 0777);
                         strcat(path, "/firmware");
                         mkdir(path, 0777);
@@ -1558,10 +1537,10 @@ void app_main(void)
     printf("\n\n#################### odroid-go-firmware (Ver: "PROJECT_VER") ####################\n\n");
 
     // Init NVS
-    nvs_flash_init_partition(NVS_PART_NAME);
-    if (nvs_open_from_partition(NVS_PART_NAME, "settings", NVS_READWRITE, &nvs_h) != ESP_OK) {
-        nvs_flash_erase_partition(NVS_PART_NAME);
-        nvs_open_from_partition(NVS_PART_NAME, "settings", NVS_READWRITE, &nvs_h);
+    nvs_flash_init();
+    if (nvs_open("settings", NVS_READWRITE, &nvs_h) != ESP_OK) {
+        nvs_flash_erase();
+        nvs_open("settings", NVS_READWRITE, &nvs_h);
     }
 
     // Init gamepad
@@ -1572,12 +1551,12 @@ void app_main(void)
     gpio_set_level(GPIO_NUM_2, 1);
 
     // Has to be before LCD
-    sdcardret = odroid_sdcard_open(SD_CARD);
+    sdcardret = odroid_sdcard_open();
 
     ili9341_init();
     ili9341_clear(0xffff);
 
-    UG_Init(&gui, pset, 320, 240);
+    UG_Init(&gui, pset, SCREEN_WIDTH, SCREEN_HEIGHT);
 
     // Start battery monitor
     xTaskCreate(&battery_task, "battery_task", 4096, NULL, 5, NULL);

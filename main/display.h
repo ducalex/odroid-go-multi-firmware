@@ -1,6 +1,9 @@
 #pragma once
 
-void ili9341_init();
-void ili9341_deinit();
-void ili9341_write_rectangle(short left, short top, short width, short height, uint16_t* buffer);
+#define SCREEN_WIDTH 320
+#define SCREEN_HEIGHT 240
+
+void ili9341_init(void);
+void ili9341_deinit(void);
+void ili9341_write_rectangle(int left, int top, int width, int height, const uint16_t* buffer);
 void ili9341_clear(uint16_t color);

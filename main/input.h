@@ -18,12 +18,6 @@ enum
 	ODROID_INPUT_MAX
 };
 
-typedef struct
-{
-    uint8_t values[ODROID_INPUT_MAX];
-} odroid_gamepad_state;
-
-void input_init();
-void input_read(odroid_gamepad_state* out_state);
+void input_init(void);
+uint32_t input_read_raw();
 int input_wait_for_button_press(int ticks);
-odroid_gamepad_state input_read_raw();

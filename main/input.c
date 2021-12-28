@@ -17,104 +17,67 @@
 #define ODROID_GAMEPAD_IO_VOLUME GPIO_NUM_0
 
 static volatile bool input_task_is_running = false;
-static volatile odroid_gamepad_state gamepad_state;
-static volatile bool input_gamepad_initialized = false;
-static SemaphoreHandle_t xSemaphore;
+static volatile uint32_t gamepad_state = 0;
 
 
-odroid_gamepad_state input_read_raw()
+uint32_t input_read_raw(void)
 {
-    odroid_gamepad_state state = {0};
+    uint32_t state = 0;
 
     int joyX = adc1_get_raw(ODROID_GAMEPAD_IO_X);
     int joyY = adc1_get_raw(ODROID_GAMEPAD_IO_Y);
 
     if (joyX > 2048 + 1024)
     {
-        state.values[ODROID_INPUT_LEFT] = 1;
-        state.values[ODROID_INPUT_RIGHT] = 0;
+        state |= (1 << ODROID_INPUT_LEFT);
     }
     else if (joyX > 1024)
     {
-        state.values[ODROID_INPUT_LEFT] = 0;
-        state.values[ODROID_INPUT_RIGHT] = 1;
-    }
-    else
-    {
-        state.values[ODROID_INPUT_LEFT] = 0;
-        state.values[ODROID_INPUT_RIGHT] = 0;
+        state |= (1 << ODROID_INPUT_RIGHT);
     }
 
     if (joyY > 2048 + 1024)
     {
-        state.values[ODROID_INPUT_UP] = 1;
-        state.values[ODROID_INPUT_DOWN] = 0;
+        state |= (1 << ODROID_INPUT_UP);
     }
     else if (joyY > 1024)
     {
-        state.values[ODROID_INPUT_UP] = 0;
-        state.values[ODROID_INPUT_DOWN] = 1;
-    }
-    else
-    {
-        state.values[ODROID_INPUT_UP] = 0;
-        state.values[ODROID_INPUT_DOWN] = 0;
+        state |= (1 << ODROID_INPUT_DOWN);
     }
 
-    state.values[ODROID_INPUT_SELECT] = !(gpio_get_level(ODROID_GAMEPAD_IO_SELECT));
-    state.values[ODROID_INPUT_START] = !(gpio_get_level(ODROID_GAMEPAD_IO_START));
-
-    state.values[ODROID_INPUT_A] = !(gpio_get_level(ODROID_GAMEPAD_IO_A));
-    state.values[ODROID_INPUT_B] = !(gpio_get_level(ODROID_GAMEPAD_IO_B));
-
-    state.values[ODROID_INPUT_MENU] = !(gpio_get_level(ODROID_GAMEPAD_IO_MENU));
-    state.values[ODROID_INPUT_VOLUME] = !(gpio_get_level(ODROID_GAMEPAD_IO_VOLUME));
+    state |= (!gpio_get_level(ODROID_GAMEPAD_IO_SELECT)) ? (1 << ODROID_INPUT_SELECT) : 0;
+    state |= (!gpio_get_level(ODROID_GAMEPAD_IO_START)) ? (1 << ODROID_INPUT_START) : 0;
+    state |= (!gpio_get_level(ODROID_GAMEPAD_IO_A)) ? (1 << ODROID_INPUT_A) : 0;
+    state |= (!gpio_get_level(ODROID_GAMEPAD_IO_B)) ? (1 << ODROID_INPUT_B) : 0;
+    state |= (!gpio_get_level(ODROID_GAMEPAD_IO_MENU)) ? (1 << ODROID_INPUT_MENU) : 0;
+    state |= (!gpio_get_level(ODROID_GAMEPAD_IO_VOLUME)) ? (1 << ODROID_INPUT_VOLUME) : 0;
 
     return state;
 }
 
-void input_read(odroid_gamepad_state* out_state)
-{
-    if (!input_gamepad_initialized) abort();
-
-    xSemaphoreTake(xSemaphore, portMAX_DELAY);
-
-    *out_state = gamepad_state;
-
-    xSemaphoreGive(xSemaphore);
-}
-
 int input_wait_for_button_press(int ticks)
 {
-    odroid_gamepad_state previousState;
-    input_read(&previousState);
+    uint32_t previousState = gamepad_state;
 
     int timeout = xTaskGetTickCount() + ticks;
-    //uint16_t btns = 0;
 
     while (true)
     {
-		odroid_gamepad_state state;
-		input_read(&state);
+        uint32_t state = gamepad_state;
 
-        for(int i = 0; i < ODROID_INPUT_MAX; i++)
+        for (int i = 0; i < ODROID_INPUT_MAX; i++)
         {
-            if (!previousState.values[i] && state.values[i]) {
-                //btns |= (1 << i);
+            if (!(previousState & (1 << i)) && (state & (1 << i))) {
                 return i;
             }
         }
-
-        //if (btns != 0) { we don't need multiple detection right now
-        //    return btns;
-        //}
 
         if (ticks > 0 && timeout < xTaskGetTickCount()) {
             break;
         }
 
         previousState = state;
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 
     return -1;
@@ -122,81 +85,51 @@ int input_wait_for_button_press(int ticks)
 
 static void input_task(void *arg)
 {
-    odroid_gamepad_state previous_gamepad_state;
     uint8_t debounce[ODROID_INPUT_MAX];
 
     input_task_is_running = true;
 
     // Initialize state
-    for(int i = 0; i < ODROID_INPUT_MAX; ++i)
+    for (int i = 0; i < ODROID_INPUT_MAX; ++i)
     {
         debounce[i] = 0xff;
     }
 
-
-    while(input_task_is_running)
+    while (input_task_is_running)
     {
-        // Shift current values
-        for(int i = 0; i < ODROID_INPUT_MAX; ++i)
-		{
-			debounce[i] <<= 1;
-		}
-
         // Read hardware
-        odroid_gamepad_state state = input_read_raw();
+        uint32_t state = input_read_raw();
 
         // Debounce
-        xSemaphoreTake(xSemaphore, portMAX_DELAY);
-
-        for(int i = 0; i < ODROID_INPUT_MAX; ++i)
-		{
-            debounce[i] |= state.values[i] ? 1 : 0;
-            uint8_t val = debounce[i] & 0x03; //0x0f;
-            switch (val) {
+        for (int i = 0; i < ODROID_INPUT_MAX; ++i)
+        {
+            debounce[i] <<= 1;
+            debounce[i] |= (state >> i) & 1;
+            switch (debounce[i] & 0x03)
+            {
                 case 0x00:
-                    gamepad_state.values[i] = 0;
+                    gamepad_state &= (1 << i);
                     break;
 
-                case 0x03: //0x0f:
-                    gamepad_state.values[i] = 1;
+                case 0x03:
+                    gamepad_state |= (1 << i);
                     break;
 
                 default:
                     // ignore
                     break;
             }
-		}
+        }
 
-        previous_gamepad_state = gamepad_state;
-
-        xSemaphoreGive(xSemaphore);
-
-        // delay
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 
-    input_gamepad_initialized = false;
-
-    vSemaphoreDelete(xSemaphore);
-
-    // Remove the task from scheduler
     vTaskDelete(NULL);
-
-    // Never return
-    while (1) { vTaskDelay(1);}
 }
 
-void input_init()
+void input_init(void)
 {
-    xSemaphore = xSemaphoreCreateMutex();
-
-    if(xSemaphore == NULL)
-    {
-        ESP_LOGE(__func__, "xSemaphoreCreateMutex failed.");
-        abort();
-    }
-
-	gpio_set_direction(ODROID_GAMEPAD_IO_SELECT, GPIO_MODE_INPUT);
+    gpio_set_direction(ODROID_GAMEPAD_IO_SELECT, GPIO_MODE_INPUT);
 	gpio_set_pull_mode(ODROID_GAMEPAD_IO_SELECT, GPIO_PULLUP_ONLY);
 
 	gpio_set_direction(ODROID_GAMEPAD_IO_START, GPIO_MODE_INPUT);
@@ -215,8 +148,6 @@ void input_init()
 	gpio_set_pull_mode(ODROID_GAMEPAD_IO_MENU, GPIO_PULLUP_ONLY);
 
 	gpio_set_direction(ODROID_GAMEPAD_IO_VOLUME, GPIO_MODE_INPUT);
-
-    input_gamepad_initialized = true;
 
     // Start background polling
     xTaskCreatePinnedToCore(&input_task, "input_task", 1024 * 2, NULL, 5, NULL, 1);
