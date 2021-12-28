@@ -1,21 +1,25 @@
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
+#include <driver/gpio.h>
+#include <driver/adc.h>
+#include <esp_log.h>
+
 #include "input.h"
 
-#include "driver/gpio.h"
-#include "driver/adc.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
-#include "freertos/task.h"
-#include "esp_log.h"
-
+#define ODROID_GAMEPAD_IO_X ADC1_CHANNEL_6
+#define ODROID_GAMEPAD_IO_Y ADC1_CHANNEL_7
+#define ODROID_GAMEPAD_IO_SELECT GPIO_NUM_27
+#define ODROID_GAMEPAD_IO_START GPIO_NUM_39
+#define ODROID_GAMEPAD_IO_A GPIO_NUM_32
+#define ODROID_GAMEPAD_IO_B GPIO_NUM_33
+#define ODROID_GAMEPAD_IO_MENU GPIO_NUM_13
+#define ODROID_GAMEPAD_IO_VOLUME GPIO_NUM_0
 
 static volatile bool input_task_is_running = false;
 static volatile odroid_gamepad_state gamepad_state;
-static odroid_gamepad_state previous_gamepad_state;
-static uint8_t debounce[ODROID_INPUT_MAX];
 static volatile bool input_gamepad_initialized = false;
 static SemaphoreHandle_t xSemaphore;
-
-
 
 
 odroid_gamepad_state input_read_raw()
@@ -80,7 +84,7 @@ void input_read(odroid_gamepad_state* out_state)
     xSemaphoreGive(xSemaphore);
 }
 
-uint16_t wait_for_button_press(int ticks)
+int input_wait_for_button_press(int ticks)
 {
     odroid_gamepad_state previousState;
     input_read(&previousState);
@@ -118,6 +122,9 @@ uint16_t wait_for_button_press(int ticks)
 
 static void input_task(void *arg)
 {
+    odroid_gamepad_state previous_gamepad_state;
+    uint8_t debounce[ODROID_INPUT_MAX];
+
     input_task_is_running = true;
 
     // Initialize state

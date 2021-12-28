@@ -1,14 +1,14 @@
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_system.h"
-#include "esp_log.h"
-#include "driver/spi_master.h"
-#include "driver/ledc.h"
-#include "driver/rtc_io.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <esp_system.h>
+#include <esp_log.h>
+#include <driver/spi_master.h>
+#include <driver/ledc.h>
+#include <driver/rtc_io.h>
 
 #include <string.h>
 
-#include "odroid_display.h"
+#include "display.h"
 
 
 const gpio_num_t SPI_PIN_NUM_MISO = GPIO_NUM_19;
@@ -291,75 +291,13 @@ static void backlight_init()
     ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, LEDC_FADE_NO_WAIT);
 }
 
-void backlight_deinit()
+static void backlight_deinit()
 {
     ledc_fade_func_uninstall();
     esp_err_t err = ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
     if (err != ESP_OK)
     {
         ESP_LOGE(__func__, "LCD: ledc_stop failed.");
-    }
-}
-
-void ili9341_write_frame(uint16_t* buffer)
-{
-    if (buffer == NULL)
-    {
-        // clear the buffer
-        memset(line[0], 0x00, 320 * sizeof(uint16_t));
-
-        // clear the screen
-        send_reset_drawing(0, 0, 320, 240);
-
-        for (int y = 0; y < 240; ++y)
-        {
-            send_continue_line(line[0], 320, 1);
-        }
-    }
-    else
-    {
-        const int displayWidth = 320;
-        const int displayHeight = 240;
-
-
-        send_reset_drawing(0, 0, displayWidth, displayHeight);
-
-        for (int y = 0; y < displayHeight; y += 4)
-        {
-            send_continue_line(buffer + y * displayWidth, displayWidth, 4);
-        }
-    }
-}
-
-void ili9341_write_frame_rectangle(short left, short top, short width, short height, uint16_t* buffer)
-{
-    if (left < 0 || top < 0) abort();
-    if (width < 1 || height < 1) abort();
-
-    send_reset_drawing(left, top, width, height);
-
-    if (buffer == NULL)
-    {
-        // clear the buffer
-        memset(line[0], 0x00, 320 * sizeof(uint16_t));
-
-        // clear the screen
-        for (int y = 0; y < height; ++y)
-        {
-            send_continue_line(line[0], width, 1);
-        }
-    }
-    else
-    {
-        short alt = 0;
-        for (int y = 0; y < height; y++)
-        {
-            memcpy(line[alt], buffer + y * width, width * sizeof(uint16_t));
-            send_continue_line(line[alt], width, 1);
-
-            ++alt;
-            if (alt > 1) alt = 0;
-        }
     }
 }
 
@@ -380,7 +318,7 @@ void ili9341_clear(uint16_t color)
     }
 }
 
-void ili9341_write_frame_rectangleLE(short left, short top, short width, short height, uint16_t* buffer)
+void ili9341_write_rectangle(short left, short top, short width, short height, uint16_t* buffer)
 {
     if (left < 0 || top < 0) abort();
     if (width < 1 || height < 1) abort();

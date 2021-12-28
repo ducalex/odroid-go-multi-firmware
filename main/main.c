@@ -7,7 +7,6 @@
 #include <esp_ota_ops.h>
 #include <esp_heap_caps.h>
 #include <esp_flash_data_types.h>
-// #include <esp_idf_version.h>
 #include <esp_log.h>
 #include <nvs_flash.h>
 #include <nvs.h>
@@ -26,9 +25,11 @@
 #include <stdlib.h>
 #include <math.h>
 
-#include "odroid_sdcard.h"
-#include "odroid_display.h"
+#include "sdcard.h"
+#include "display.h"
 #include "input.h"
+
+extern void esp_partition_reload_table(void);
 
 #include "../components/ugui/ugui.h"
 
@@ -57,7 +58,6 @@
 #define APP_SORT_DIR_ASC     0b0000
 #define APP_SORT_DIR_DESC    0b0001
 
-// #define FLASH_SIZE (16 * 1024 * 1024)
 #define FLASH_SIZE ((int)spi_flash_get_chip_size())
 #define FLASH_BLOCK_SIZE (64 * 1024)
 #define ERASE_BLOCK_SIZE (4 * 1024)
@@ -80,7 +80,7 @@
 #define LED_OFF() gpio_set_level(GPIO_NUM_2, 0);
 
 #define SD_CARD "/sd"
-#define FIRMWARE_PATH "/sd/odroid/firmware"
+#define FIRMWARE_PATH SD_CARD "/odroid/firmware"
 
 //const char* HEADER = "ODROIDGO_FIRMWARE_V00_00";
 const char* HEADER_V00_01 = "ODROIDGO_FIRMWARE_V00_01";
@@ -230,7 +230,7 @@ static void pset(UG_S16 x, UG_S16 y, UG_COLOR color)
 
 static void ui_update_display()
 {
-    ili9341_write_frame_rectangleLE(0, 0, 320, 240, fb);
+    ili9341_write_rectangle(0, 0, 320, 240, fb);
 }
 
 static void ui_draw_image(short x, short y, short width, short height, uint16_t* data)
@@ -925,7 +925,7 @@ void flash_firmware(const char* fullPath)
     DisplayFooter("[B] Cancel");
 
     while (1) {
-        int btn = wait_for_button_press(-1);
+        int btn = input_wait_for_button_press(-1);
 
         if (btn == ODROID_INPUT_START && can_proceed) break;
         if (btn == ODROID_INPUT_B)
@@ -1076,7 +1076,7 @@ void flash_firmware(const char* fullPath)
     DisplayFooter("[B] Go Back   |   [A] Boot");
 
     while (1) {
-        int btn = wait_for_button_press(-1);
+        int btn = input_wait_for_button_press(-1);
 
         if (btn == ODROID_INPUT_A) break;
         if (btn == ODROID_INPUT_B) return;
@@ -1235,7 +1235,7 @@ char* ui_choose_file(const char* path)
         int page = (currentItem / ITEM_COUNT) * ITEM_COUNT;
 
         // Wait for input but refresh display after 1000 ticks if no input
-        int btn = wait_for_button_press(1000);
+        int btn = input_wait_for_button_press(1000);
 
         if (fileCount > 0)
         {
@@ -1339,7 +1339,7 @@ static int ui_choose_dialog(dialog_option_t *options, int optionCount, bool canc
     {
         ui_draw_dialog(options, optionCount, currentItem);
 
-        int btn = wait_for_button_press(-1);
+        int btn = input_wait_for_button_press(-1);
 
         if (btn == ODROID_INPUT_DOWN)
         {
@@ -1408,7 +1408,7 @@ void ui_choose_app()
         int page = (currentItem / ITEM_COUNT) * ITEM_COUNT;
 
         // Wait for input but refresh display after 1000 ticks if no input
-        int btn = (queuedBtn != -1) ? queuedBtn : wait_for_button_press(1000);
+        int btn = (queuedBtn != -1) ? queuedBtn : input_wait_for_button_press(1000);
         queuedBtn = -1;
 
 		if (apps_count > 0)
@@ -1456,7 +1456,7 @@ void ui_choose_app()
                     sprintf(tempstring, "NOW SORTING BY %s %s", descriptions[(displayOrder >> 1)], order[displayOrder & 1]);
 
                     DisplayNotification(tempstring);
-                    queuedBtn = wait_for_button_press(200);
+                    queuedBtn = input_wait_for_button_press(200);
                 }
                 while (queuedBtn == ODROID_INPUT_SELECT);
 
@@ -1498,10 +1498,10 @@ void ui_choose_app()
                         apps[currentItem].parts_count, apps[currentItem].startOffset);
                     if (nvs_flash_erase() == ESP_OK) {
                         DisplayNotification("Operation successful!");
-                        queuedBtn = wait_for_button_press(100);
+                        queuedBtn = input_wait_for_button_press(100);
                     } else {
                         DisplayNotification("An error has occurred!");
-                        queuedBtn = wait_for_button_press(200);
+                        queuedBtn = input_wait_for_button_press(200);
                     }
                     break;
                 case 3: // Erase all apps
@@ -1513,7 +1513,7 @@ void ui_choose_app()
                 case 4: // Format SD Card
                     ui_draw_title("Format SD Card", PROJECT_VER);
                     DisplayMessage("Press start to begin");
-                    if (wait_for_button_press(50000) != ODROID_INPUT_START) {
+                    if (input_wait_for_button_press(50000) != ODROID_INPUT_START) {
                         break;
                     }
                     DisplayMessage("Formatting... (be patient)");
@@ -1530,7 +1530,7 @@ void ui_choose_app()
                     } else {
                         DisplayError("Format failed!");
                     }
-                    wait_for_button_press(50000);
+                    input_wait_for_button_press(50000);
                     break;
                 case 5: // Restart
                     cleanup_and_restart();
@@ -1542,7 +1542,7 @@ void ui_choose_app()
         else if (btn == ODROID_INPUT_B)
         {
             DisplayNotification("Press B again to boot last app.");
-            queuedBtn = wait_for_button_press(100);
+            queuedBtn = input_wait_for_button_press(100);
             if (queuedBtn == ODROID_INPUT_B) {
                 esp_ota_set_boot_partition(esp_partition_find_first(ESP_PARTITION_TYPE_APP,
                     ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL)); // Restore OTA data if possible and reboot

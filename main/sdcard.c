@@ -1,5 +1,3 @@
-#include "odroid_sdcard.h"
-
 #include <esp_log.h>
 #include <esp_vfs_fat.h>
 #include <driver/sdmmc_host.h>
@@ -14,6 +12,7 @@
 #include <unistd.h>
 #include <ctype.h>
 
+#include "sdcard.h"
 
 #define SD_PIN_NUM_MISO 19
 #define SD_PIN_NUM_MOSI 23
@@ -23,6 +22,8 @@
 
 static bool isOpen = false;
 
+extern esp_err_t ff_diskio_get_drive(BYTE* out_pdrv);
+extern void ff_diskio_register_sdmmc(unsigned char pdrv, sdmmc_card_t* card);
 
 inline static void swap(char** a, char** b)
 {
@@ -215,7 +216,7 @@ esp_err_t odroid_sdcard_open(const char* base_path)
 	return ret;
 }
 
-esp_err_t odroid_sdcard_close()
+esp_err_t odroid_sdcard_close(void)
 {
     esp_err_t ret;
 
@@ -235,75 +236,6 @@ esp_err_t odroid_sdcard_close()
         else
         {
             ESP_LOGE(__func__, "esp_vfs_fat_sdmmc_unmount failed (%d)", ret);
-        }
-    }
-
-    return ret;
-}
-
-size_t odroid_sdcard_get_filesize(const char* path)
-{
-    size_t ret = 0;
-
-    if (!isOpen)
-    {
-        ESP_LOGE(__func__, "not open.");
-    }
-    else
-    {
-        FILE* f = fopen(path, "rb");
-        if (f == NULL)
-        {
-            ESP_LOGE(__func__, "fopen failed.");
-        }
-        else
-        {
-            // get the file size
-            fseek(f, 0, SEEK_END);
-            ret = ftell(f);
-            fseek(f, 0, SEEK_SET);
-        }
-    }
-
-    return ret;
-}
-
-size_t odroid_sdcard_copy_file_to_memory(const char* path, void* ptr)
-{
-    size_t ret = 0;
-
-    if (!isOpen)
-    {
-        ESP_LOGE(__func__, "not open.");
-    }
-    else
-    {
-        if (!ptr)
-        {
-            ESP_LOGE(__func__, "ptr is null.");
-        }
-        else
-        {
-            FILE* f = fopen(path, "rb");
-            if (f == NULL)
-            {
-                ESP_LOGE(__func__, "fopen failed.");
-            }
-            else
-            {
-                // copy
-                const size_t BLOCK_SIZE = 512;
-                while(true)
-                {
-                    __asm__("memw");
-                    size_t count = fread((uint8_t*)ptr + ret, 1, BLOCK_SIZE, f);
-                    __asm__("memw");
-
-                    ret += count;
-
-                    if (count < BLOCK_SIZE) break;
-                }
-            }
         }
     }
 
@@ -389,7 +321,7 @@ _cleanup:
 
     free(buffer);
     host_config.deinit();
-    ff_diskio_unregister(drive);
+    ff_diskio_register_sdmmc(drive, NULL);
 
     return err;
 }
