@@ -21,8 +21,6 @@ The official esp-idf version 3.1 or newer is required and you need to apply the 
 
 _Note: Those patches do not introduce breaking changes to non-GO (standard ESP32) projects and can safely be applied to your global esp-idf installation._
 
-_Note2: esp-idf newer than 3.3-rc wil cause compatibility issues with older apps like Go-Play. The version I use to build official releases is `v3.3-rc-8-gbeb34b539`._
-
 
 ## Build Steps:
 1. Compile firmware: `make -j4` or `idf.py build`

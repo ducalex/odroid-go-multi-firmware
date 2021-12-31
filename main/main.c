@@ -28,22 +28,16 @@
 #include "display.h"
 #include "input.h"
 
-extern void esp_partition_reload_table(void);
-
 #include "ugui/ugui.h"
 
-#define ALIGN_ADDRESS(val, alignment) (((val & (alignment-1)) != 0) ? (val & ~(alignment-1)) + alignment : val)
+extern void esp_partition_reload_table(void);
 
-#define ESP_PARTITION_TABLE_OFFSET CONFIG_PARTITION_TABLE_OFFSET /* Offset of partition table. Backwards-compatible name.*/
-#define ESP_PARTITION_TABLE_MAX_LEN 0xC00 /* Maximum length of partition table data */
-#define ESP_PARTITION_TABLE_MAX_ENTRIES (ESP_PARTITION_TABLE_MAX_LEN / sizeof(esp_partition_info_t)) /* Maximum length of partition table data, including terminating entry */
+#define MFW_NVS_PARTITION  "mfw_nvs"
+#define MFW_DATA_PARTITION "mfw_data"
 
 #ifndef PROJECT_VER
     #define PROJECT_VER "n/a"
 #endif
-
-#define PART_SUBTYPE_FACTORY 0x00
-#define PART_SUBTYPE_FACTORY_DATA 0xFE
 
 #define APP_MAGIC 0x1207
 
@@ -72,11 +66,10 @@ extern void esp_partition_reload_table(void);
 
 #define ITEM_COUNT (4)
 
+#define ALIGN_ADDRESS(val, alignment) (((val & (alignment-1)) != 0) ? (val & ~(alignment-1)) + alignment : val)
 #define SET_STATUS_LED(on) gpio_set_level(GPIO_NUM_2, on);
 
 const char* HEADER_V00_01 = "ODROIDGO_FIRMWARE_V00_01";
-
-extern const esp_app_desc_t esp_app_desc;
 
 
 // <partition type=0x00 subtype=0x00 label='name' flags=0x00000000 length=0x00000000>
@@ -149,9 +142,6 @@ static int apps_max = 4;
 static int nextInstallSeq = 0;
 static int displayOrder = 0;
 
-static esp_partition_info_t* partition_data;
-static int partition_count = -1;
-static int startTableEntry = -1;
 static int startFlashAddress = -1;
 
 static odroid_fw_t *fwInfoBuffer;
@@ -364,7 +354,7 @@ static void cleanup_and_restart(void)
 
     // Close NVS
     nvs_close(nvs_h);
-    nvs_flash_deinit();
+    nvs_flash_deinit_partition(MFW_NVS_PARTITION);
 
     esp_restart();
 }
@@ -444,15 +434,13 @@ static void sort_app_table(int newMode)
 
 static void read_app_table(void)
 {
-    const esp_partition_t *app_table_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
-                                                                     PART_SUBTYPE_FACTORY_DATA, NULL);
+    const esp_partition_t *app_table_part = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, MFW_DATA_PARTITION);
 
     if (!app_table_part) {
         DisplayError("NO APP TABLE ERROR");
         indicate_error();
     }
-
-    startFlashAddress = app_table_part->address + app_table_part->size;
 
     apps_max = (app_table_part->size / sizeof(odroid_app_t));
     apps_count = 0;
@@ -479,7 +467,8 @@ static void read_app_table(void)
     }
 
     //64K align the address (https://docs.espressif.com/projects/esp-idf/en/latest/api-guides/partition-tables.html#offset-size)
-    startFlashAddress = ALIGN_ADDRESS(startFlashAddress, 0x10000);
+    startFlashAddress = app_table_part->address + app_table_part->size;
+    startFlashAddress = ALIGN_ADDRESS(startFlashAddress, FLASH_BLOCK_SIZE);
 
     ESP_LOGI(__func__, "Read app table (%d apps)", apps_count);
 }
@@ -489,8 +478,8 @@ static void write_app_table()
 {
     esp_err_t err;
 
-    const esp_partition_t *app_table_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
-                                                                     PART_SUBTYPE_FACTORY_DATA, NULL);
+    const esp_partition_t *app_table_part = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, MFW_DATA_PARTITION);
 
     if (!apps || !app_table_part) {
         DisplayError("NO APP TABLE ERROR");
@@ -522,19 +511,14 @@ static void write_app_table()
 }
 
 
-static void read_partition_table()
+static void write_partition_table(odroid_partition_t* parts, size_t parts_count, size_t flashOffset)
 {
+    static esp_partition_info_t partition_data[ESP_PARTITION_TABLE_MAX_ENTRIES];
+    static int startTableEntry = -1;
     esp_err_t err;
 
-    partition_count = 0;
-
-    if (!partition_data)
-    {
-        partition_data = (esp_partition_info_t*)malloc(ESP_PARTITION_TABLE_MAX_LEN);
-    }
-
     // Read table
-    err = spi_flash_read(ESP_PARTITION_TABLE_OFFSET, (void*)partition_data, ESP_PARTITION_TABLE_MAX_LEN);
+    err = spi_flash_read(ESP_PARTITION_TABLE_OFFSET, &partition_data, sizeof(partition_data));
     if (err != ESP_OK)
     {
         DisplayError("TABLE READ ERROR");
@@ -550,25 +534,12 @@ static void read_partition_table()
 
         if (part->magic == ESP_PARTITION_MAGIC)
         {
-            partition_count++;
-
-            if (part->type == PART_TYPE_DATA &&
-                part->subtype == PART_SUBTYPE_FACTORY_DATA)
+            if (memcmp(part->label, MFW_DATA_PARTITION, sizeof(MFW_DATA_PARTITION)) == 0)
             {
                 startTableEntry = i + 1;
                 break;
             }
         }
-    }
-}
-
-
-static void write_partition_table(odroid_partition_t* parts, size_t parts_count, size_t flashOffset)
-{
-    esp_err_t err;
-
-    if (!partition_data) {
-        read_partition_table();
     }
 
     // Find end of first partitioned
@@ -603,12 +574,6 @@ static void write_partition_table(odroid_partition_t* parts, size_t parts_count,
     }
 
     // Erase partition table
-    if (ESP_PARTITION_TABLE_MAX_LEN > 4096)
-    {
-        DisplayError("TABLE SIZE ERROR");
-        indicate_error();
-    }
-
     err = spi_flash_erase_range(ESP_PARTITION_TABLE_OFFSET, 4096);
     if (err != ESP_OK)
     {
@@ -617,7 +582,7 @@ static void write_partition_table(odroid_partition_t* parts, size_t parts_count,
     }
 
     // Write new table
-    err = spi_flash_write(ESP_PARTITION_TABLE_OFFSET, (void*)partition_data, ESP_PARTITION_TABLE_MAX_LEN);
+    err = spi_flash_write(ESP_PARTITION_TABLE_OFFSET, &partition_data, sizeof(partition_data));
     if (err != ESP_OK)
     {
         DisplayError("TABLE WRITE ERROR");
@@ -804,7 +769,7 @@ bool firmware_get_info(const char* filename, odroid_fw_t* outData)
             goto firmware_get_info_err;
 
         // 4KB align the partition length, this is needed for erasing
-        part->length = ALIGN_ADDRESS(part->length, 0x1000);
+        part->length = ALIGN_ADDRESS(part->length, ERASE_BLOCK_SIZE);
 
         outData->flashSize += part->length;
         outData->parts_count++;
@@ -1057,7 +1022,7 @@ void flash_firmware(const char* fullPath)
     fclose(file);
 
     // 64K align our endOffset
-    app->endOffset = ALIGN_ADDRESS(currentFlashAddress, 0x10000) - 1;
+    app->endOffset = ALIGN_ADDRESS(currentFlashAddress, FLASH_BLOCK_SIZE) - 1;
 
     // Remember the install order, for display sorting
     app->installSeq = nextInstallSeq++;
@@ -1533,9 +1498,7 @@ void ui_choose_app()
             DisplayNotification("Press B again to boot last app.");
             queuedBtn = input_wait_for_button_press(100);
             if (queuedBtn == ODROID_INPUT_B) {
-                esp_ota_set_boot_partition(esp_partition_find_first(ESP_PARTITION_TYPE_APP,
-                    ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL)); // Restore OTA data if possible and reboot
-                cleanup_and_restart();
+                boot_application();
             }
         }
     }
@@ -1544,10 +1507,10 @@ void ui_choose_app()
 
 void app_main(void)
 {
-    printf("\n\n#################### odroid-go-firmware (Ver: "PROJECT_VER") ####################\n\n");
+    printf("\n\n############### odroid-go-multi-firmware (Ver: "PROJECT_VER") ###############\n\n");
 
     // Init NVS
-    nvs_flash_init();
+    nvs_flash_init_partition(MFW_NVS_PARTITION);
     if (nvs_open("settings", NVS_READWRITE, &nvs_h) != ESP_OK) {
         nvs_flash_erase();
         nvs_open("settings", NVS_READWRITE, &nvs_h);
@@ -1574,7 +1537,6 @@ void app_main(void)
     fwInfoBuffer = safe_alloc(sizeof(odroid_fw_t));
     dataBuffer = safe_alloc(FLASH_BLOCK_SIZE);
 
-    read_partition_table();
     read_app_table();
 
     ui_choose_app();
