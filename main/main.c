@@ -336,7 +336,21 @@ static void DisplayTile(uint16_t *tileData)
 
 
 //---------------
-void cleanup_and_restart(void)
+static void *safe_alloc(size_t size)
+{
+    void *ptr = malloc(size);
+    if (!ptr)
+    {
+        DisplayError("MEMORY ALLOCATION ERROR");
+        // Do the printf AFTER DisplayError because it could fail itself
+        printf("Memory allocation of %d bytes failed!\n", size);
+        indicate_error();
+    }
+    return ptr;
+}
+
+
+static void cleanup_and_restart(void)
 {
     // Turn off LED pin
     gpio_set_direction(GPIO_NUM_2, GPIO_MODE_INPUT);
@@ -356,7 +370,7 @@ void cleanup_and_restart(void)
 }
 
 
-void boot_application(void)
+static void boot_application(void)
 {
     ESP_LOGI(__func__, "Booting application.");
 
@@ -413,7 +427,7 @@ static void sort_app_table(int newMode)
     }
 
     if (newMode & 1) { // Reverse array. Very inefficient.
-        odroid_app_t *tmp = malloc(sizeof(odroid_app_t));
+        odroid_app_t *tmp = safe_alloc(sizeof(odroid_app_t));
         int i = apps_count - 1, j = 0;
         while (i > j)
         {
@@ -433,21 +447,18 @@ static void read_app_table(void)
     const esp_partition_t *app_table_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
                                                                      PART_SUBTYPE_FACTORY_DATA, NULL);
 
-    assert(app_table_part);
+    if (!app_table_part) {
+        DisplayError("NO APP TABLE ERROR");
+        indicate_error();
+    }
 
     startFlashAddress = app_table_part->address + app_table_part->size;
 
     apps_max = (app_table_part->size / sizeof(odroid_app_t));
-
     apps_count = 0;
 
     if (!apps) {
-        apps = malloc(app_table_part->size);
-    }
-
-    if (!apps) {
-        DisplayError("APP TABLE ALLOC ERROR");
-        indicate_error();
+        apps = safe_alloc(app_table_part->size);
     }
 
     esp_err_t err = esp_partition_read(app_table_part, 0, (void*)apps, app_table_part->size);
@@ -481,8 +492,9 @@ static void write_app_table()
     const esp_partition_t *app_table_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
                                                                      PART_SUBTYPE_FACTORY_DATA, NULL);
 
-    if (!app_table_part || !apps) {
-        read_app_table();
+    if (!apps || !app_table_part) {
+        DisplayError("NO APP TABLE ERROR");
+        indicate_error();
     }
 
     for (int i = apps_count; i < apps_max; ++i)
@@ -685,7 +697,7 @@ void find_free_blocks(odroid_flash_block_t **blocks, size_t *count, size_t *tota
     size_t flashSize = spi_flash_get_chip_size();
     size_t previousBlockEnd = startFlashAddress;
 
-    (*blocks) = malloc(sizeof(odroid_flash_block_t) * 32);
+    (*blocks) = safe_alloc(sizeof(odroid_flash_block_t) * 32);
 
     (*totalFreeSpace) = 0;
     (*count) = 0;
@@ -1239,9 +1251,7 @@ char* ui_choose_file(const char* path)
             else if (btn == ODROID_INPUT_A)
             {
                 size_t fullPathLength = strlen(path) + 1 + strlen(files[currentItem]) + 1;
-
-                char* fullPath = (char*)malloc(fullPathLength);
-                if (!fullPath) abort();
+                char *fullPath = safe_alloc(fullPathLength);
 
                 strcpy(fullPath, path);
                 strcat(fullPath, "/");
@@ -1561,15 +1571,8 @@ void app_main(void)
     // Start battery monitor
     xTaskCreate(&battery_task, "battery_task", 4096, NULL, 5, NULL);
 
-    fwInfoBuffer = malloc(sizeof(odroid_fw_t));
-    dataBuffer = malloc(FLASH_BLOCK_SIZE);
-
-    // If we can't allocate our basic buffers we might as well give up now
-    if (!fwInfoBuffer || !dataBuffer)
-    {
-        DisplayError("MEMORY ALLOCATION ERROR");
-        indicate_error();
-    }
+    fwInfoBuffer = safe_alloc(sizeof(odroid_fw_t));
+    dataBuffer = safe_alloc(FLASH_BLOCK_SIZE);
 
     read_partition_table();
     read_app_table();
