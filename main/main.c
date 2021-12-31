@@ -136,13 +136,13 @@ typedef struct
     bool enabled;
 } dialog_option_t;
 
-static odroid_app_t* apps;
+static odroid_app_t *apps;
 static int apps_count = -1;
 static int apps_max = 4;
 static int nextInstallSeq = 0;
-static int displayOrder = 0;
 
-static int startFlashAddress = -1;
+// We scan the table to find the real value but this is a reasonable default
+static size_t firstAppOffset = 0x100000;
 
 static odroid_fw_t *fwInfoBuffer;
 static uint8_t *dataBuffer;
@@ -467,8 +467,8 @@ static void read_app_table(void)
     }
 
     //64K align the address (https://docs.espressif.com/projects/esp-idf/en/latest/api-guides/partition-tables.html#offset-size)
-    startFlashAddress = app_table_part->address + app_table_part->size;
-    startFlashAddress = ALIGN_ADDRESS(startFlashAddress, FLASH_BLOCK_SIZE);
+    firstAppOffset = app_table_part->address + app_table_part->size;
+    firstAppOffset = ALIGN_ADDRESS(firstAppOffset, FLASH_BLOCK_SIZE);
 
     ESP_LOGI(__func__, "Read app table (%d apps)", apps_count);
 }
@@ -511,81 +511,68 @@ static void write_app_table()
 }
 
 
-static void write_partition_table(odroid_partition_t* parts, size_t parts_count, size_t flashOffset)
+static void write_partition_table(const odroid_partition_t *parts, size_t count, size_t flashOffset)
 {
-    static esp_partition_info_t partition_data[ESP_PARTITION_TABLE_MAX_ENTRIES];
-    static int startTableEntry = -1;
-    esp_err_t err;
+    esp_partition_info_t partitionTable[ESP_PARTITION_TABLE_MAX_ENTRIES];
+    size_t nextPart = 0;
+
+    assert(count < ESP_PARTITION_TABLE_MAX_ENTRIES);
+    assert(parts && flashOffset >= firstAppOffset);
 
     // Read table
-    err = spi_flash_read(ESP_PARTITION_TABLE_OFFSET, &partition_data, sizeof(partition_data));
-    if (err != ESP_OK)
+    if (spi_flash_read(ESP_PARTITION_TABLE_OFFSET, &partitionTable, sizeof(partitionTable)) != ESP_OK)
     {
-        DisplayError("TABLE READ ERROR");
+        DisplayError("PART TABLE READ ERROR");
         indicate_error();
     }
 
-    // Find end of first partitioned
-
+    // Keep only the valid system partitions
     for (int i = 0; i < ESP_PARTITION_TABLE_MAX_ENTRIES; ++i)
     {
-        const esp_partition_info_t *part = &partition_data[i];
-        if (part->magic == 0xffff) break;
-
-        if (part->magic == ESP_PARTITION_MAGIC)
-        {
-            if (memcmp(part->label, MFW_DATA_PARTITION, sizeof(MFW_DATA_PARTITION)) == 0)
-            {
-                startTableEntry = i + 1;
-                break;
-            }
-        }
+        esp_partition_info_t *part = &partitionTable[i];
+        if (part->magic == 0xFFFF)
+            break;
+        if (part->magic != ESP_PARTITION_MAGIC)
+            continue;
+        if (part->pos.offset >= firstAppOffset)
+            continue;
+        partitionTable[nextPart++] = *part;
     }
 
-    // Find end of first partitioned
-    if (startTableEntry < 0)
-    {
-        DisplayError("NO FACTORY PARTITION ERROR");
-        indicate_error();
-    }
+    ESP_LOGI(__func__, "nextPart=%d, flashOffset=%#08x", nextPart, flashOffset);
 
-    ESP_LOGI(__func__, "startTableEntry=%d, startFlashAddress=%#08x", startTableEntry, flashOffset);
-
-    // blank partition table entries
-    for (int i = startTableEntry; i < ESP_PARTITION_TABLE_MAX_ENTRIES; ++i)
+    // Append app's partitions
+    for (int i = 0; i < count; ++i)
     {
-        memset(&partition_data[i], 0xff, sizeof(esp_partition_info_t));
-    }
-
-    // Add partitions
-    size_t offset = 0;
-    for (int i = 0; i < parts_count; ++i)
-    {
-        esp_partition_info_t* part = &partition_data[startTableEntry + i];
+        esp_partition_info_t* part = &partitionTable[nextPart++];
         part->magic = ESP_PARTITION_MAGIC;
         part->type = parts[i].type;
         part->subtype = parts[i].subtype;
-        part->pos.offset = flashOffset + offset;
+        part->pos.offset = flashOffset;
         part->pos.size = parts[i].length;
         memcpy(&part->label, parts[i].label, 16);
         part->flags = parts[i].flags;
 
-        offset += parts[i].length;
+        flashOffset += parts[i].length;
+    }
+
+    // Mark remaining entries as invalid
+    while (nextPart < ESP_PARTITION_TABLE_MAX_ENTRIES)
+    {
+        partitionTable[nextPart++].magic = 0xFFFF;
     }
 
     // Erase partition table
-    err = spi_flash_erase_range(ESP_PARTITION_TABLE_OFFSET, 4096);
-    if (err != ESP_OK)
+    if (spi_flash_erase_range(ESP_PARTITION_TABLE_OFFSET, ERASE_BLOCK_SIZE) != ESP_OK)
     {
-        DisplayError("TABLE ERASE ERROR");
+        DisplayError("PART TABLE ERASE ERROR");
         indicate_error();
     }
 
     // Write new table
-    err = spi_flash_write(ESP_PARTITION_TABLE_OFFSET, &partition_data, sizeof(partition_data));
-    if (err != ESP_OK)
+    if (spi_flash_write(ESP_PARTITION_TABLE_OFFSET, partitionTable, sizeof(partitionTable)) != ESP_OK)
     {
-        DisplayError("TABLE WRITE ERROR");
+        DisplayError("PART TABLE WRITE ERROR");
         indicate_error();
     }
 
@@ -593,10 +580,9 @@ static void write_partition_table(odroid_partition_t* parts, size_t parts_count,
 }
 
 
-
-void defrag_flash()
+static void defrag_flash()
 {
-    size_t nextStartOffset = startFlashAddress;
+    size_t nextStartOffset = firstAppOffset;
     size_t totalBytesToMove = 0;
     size_t totalBytesMoved = 0;
 
@@ -660,7 +646,7 @@ void defrag_flash()
 void find_free_blocks(odroid_flash_block_t **blocks, size_t *count, size_t *totalFreeSpace)
 {
     size_t flashSize = spi_flash_get_chip_size();
-    size_t previousBlockEnd = startFlashAddress;
+    size_t previousBlockEnd = firstAppOffset;
 
     (*blocks) = safe_alloc(sizeof(odroid_flash_block_t) * 32);
 
@@ -1344,16 +1330,26 @@ static void ui_draw_app_page(int currentItem)
 }
 
 
-void ui_choose_app()
+static void start_normal(void)
 {
-    ESP_LOGD(__func__, "HEAP=%#010x", esp_get_free_heap_size());
-
-    nvs_get_i32(nvs_h, "display_order", &displayOrder);
-
-    sort_app_table(displayOrder);
-
+    int displayOrder = 0;
     int currentItem = 0;
     int queuedBtn = -1;
+
+    nvs_flash_init_partition(MFW_NVS_PARTITION);
+    if (nvs_open("settings", NVS_READWRITE, &nvs_h) != ESP_OK) {
+        nvs_flash_erase();
+        nvs_open("settings", NVS_READWRITE, &nvs_h);
+    }
+    nvs_get_i32(nvs_h, "display_order", &displayOrder);
+
+    xTaskCreate(&battery_task, "battery_task", 4096, NULL, 5, NULL);
+
+    fwInfoBuffer = safe_alloc(sizeof(odroid_fw_t));
+    dataBuffer = safe_alloc(FLASH_BLOCK_SIZE);
+
+    read_app_table();
+    sort_app_table(displayOrder);
 
     while (true)
     {
@@ -1505,16 +1501,48 @@ void ui_choose_app()
 }
 
 
+static void start_install(void)
+{
+    const esp_partition_t *current = esp_ota_get_running_partition();
+    size_t addr = current->address - 0x10000;
+    size_t size = 0x10000 + current->size;
+    void *data = safe_alloc(size);
+
+    // if (!user_confirm_flash_erase)
+    {
+        // reboot to factory
+    }
+
+    // We must copy the data to RAM first because our data address space is full, can't mmap
+    if (spi_flash_read(addr, data, size) != ESP_OK)
+    {
+        DisplayError("PART TABLE WRITE ERROR");
+        indicate_error();
+    }
+
+    // It would be nicer to do the erase/write in blocks to be able to show progress
+    // but, because of the shared SPI bus, I think it is safer to do it in one go.
+
+    if (spi_flash_erase_range(0x0, size) != ESP_OK)
+    {
+        DisplayError("PART TABLE ERASE ERROR");
+        indicate_error();
+    }
+
+    if (spi_flash_write(0x0, data, size) != ESP_OK)
+    {
+        DisplayError("PART TABLE WRITE ERROR");
+        indicate_error();
+    }
+
+    // The above code will clear the ota partition, no need to set boot app
+    cleanup_and_restart();
+}
+
+
 void app_main(void)
 {
     printf("\n\n############### odroid-go-multi-firmware (Ver: "PROJECT_VER") ###############\n\n");
-
-    // Init NVS
-    nvs_flash_init_partition(MFW_NVS_PARTITION);
-    if (nvs_open("settings", NVS_READWRITE, &nvs_h) != ESP_OK) {
-        nvs_flash_erase();
-        nvs_open("settings", NVS_READWRITE, &nvs_h);
-    }
 
     // Init gamepad
     input_init();
@@ -1531,15 +1559,17 @@ void app_main(void)
 
     UG_Init(&gui, pset, SCREEN_WIDTH, SCREEN_HEIGHT);
 
-    // Start battery monitor
-    xTaskCreate(&battery_task, "battery_task", 4096, NULL, 5, NULL);
-
-    fwInfoBuffer = safe_alloc(sizeof(odroid_fw_t));
-    dataBuffer = safe_alloc(FLASH_BLOCK_SIZE);
-
-    read_app_table();
-
-    ui_choose_app();
+    // Start the installation process if we didn't boot from the factory app partition
+    if (esp_ota_get_running_partition()->subtype != ESP_PARTITION_SUBTYPE_APP_FACTORY)
+    {
+        ESP_LOGI(__func__, "Non-factory startup, launching installer...");
+        start_install();
+    }
+    else
+    {
+        ESP_LOGI(__func__, "Factory startup, launching normally...");
+        start_normal();
+    }
 
     indicate_error();
 }
