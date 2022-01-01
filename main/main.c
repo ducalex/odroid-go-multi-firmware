@@ -1,5 +1,4 @@
 #include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
 #include <esp_system.h>
 #include <esp_event.h>
 #include <esp_adc_cal.h>
@@ -30,7 +29,6 @@
 
 #include "ugui/ugui.h"
 
-extern void esp_partition_reload_table(void);
 
 #define MFW_NVS_PARTITION  "mfw_nvs"
 #define MFW_DATA_PARTITION "mfw_data"
@@ -41,28 +39,28 @@ extern void esp_partition_reload_table(void);
 
 #define APP_MAGIC 0x1207
 
-#define APP_SORT_OFFSET      0b0000
-#define APP_SORT_SEQUENCE    0b0010
-#define APP_SORT_DESCRIPTION 0b0100
-#define APP_SORT_MAX         0b0101
-#define APP_SORT_DIR_ASC     0b0000
-#define APP_SORT_DIR_DESC    0b0001
+#define APP_SORT_OFFSET             0b0000
+#define APP_SORT_SEQUENCE           0b0010
+#define APP_SORT_DESCRIPTION        0b0100
+#define APP_SORT_MAX                0b0101
+#define APP_SORT_DIR_ASC            0b0000
+#define APP_SORT_DIR_DESC           0b0001
 
-#define FLASH_BLOCK_SIZE (64 * 1024)
-#define ERASE_BLOCK_SIZE (4 * 1024)
+#define FLASH_BLOCK_SIZE            (64 * 1024)
+#define ERASE_BLOCK_SIZE            (4 * 1024)
 
-#define APP_NVS_SIZE 0x3000
+#define APP_NVS_SIZE                0x3000
 
-#define FIRMWARE_HEADER_SIZE (24)
-#define FIRMWARE_DESCRIPTION_SIZE (40)
-#define FIRMWARE_PARTS_MAX (20)
-#define FIRMWARE_TILE_WIDTH (86)
-#define FIRMWARE_TILE_HEIGHT (48)
+#define FIRMWARE_HEADER_SIZE        (24)
+#define FIRMWARE_DESCRIPTION_SIZE   (40)
+#define FIRMWARE_PARTS_MAX          (20)
+#define FIRMWARE_TILE_WIDTH         (86)
+#define FIRMWARE_TILE_HEIGHT        (48)
 
 #define FIRMWARE_PATH SDCARD_BASE_PATH "/odroid/firmware"
 
-#define BATTERY_VMAX 420
-#define BATTERY_VMIN 330
+#define BATTERY_VMAX (4.20f)
+#define BATTERY_VMIN (3.30f)
 
 #define ITEM_COUNT (4)
 
@@ -155,42 +153,24 @@ static esp_err_t sdcardret;
 
 static nvs_handle nvs_h;
 
-static int batteryPercent = 0;
 
-
-static void battery_task(void *arg)
+static float read_battery(void)
 {
-    // Some of that code is from Odroid GO Arduino library. Added rolling average for better results
-    esp_adc_cal_characteristics_t adc_cal;
-    adc1_config_width(ADC_WIDTH_BIT_12);
-    adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_11);
-    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, 1100, &adc_cal);
+    static esp_adc_cal_characteristics_t adc_cal;
+    static float batteryVoltage = -1;
 
-    const int count = 128;
-    uint32_t samples[count];
-    uint32_t loops = 0;
-
-    while(1)
+    if (batteryVoltage < 0)
     {
-        samples[loops % count] = adc1_get_raw((adc1_channel_t) ADC1_CHANNEL_0);
-
-        uint32_t total = 0;
-        for (int i = 0; i < count; i++)
-        {
-            total += samples[i];
-        }
-
-        double voltage = (double) esp_adc_cal_raw_to_voltage(total / count, &adc_cal) * 2 / 1000;
-
-        batteryPercent = 101 - (101 / pow(1 + pow(1.33 * ((int)(voltage * 100) - BATTERY_VMIN)
-                                                            / (BATTERY_VMAX - BATTERY_VMIN), 4.5), 3));
-
-        if (batteryPercent >= 100)
-            batteryPercent = 100;
-
-        if (++loops > count)
-            vTaskDelay(25);
+        adc1_config_width(ADC_WIDTH_BIT_12);
+        adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_11);
+        esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, 1100, &adc_cal);
+        batteryVoltage = esp_adc_cal_raw_to_voltage(adc1_get_raw(ADC1_CHANNEL_0), &adc_cal) * 2.f / 1000.f;
     }
+
+    batteryVoltage += esp_adc_cal_raw_to_voltage(adc1_get_raw(ADC1_CHANNEL_0), &adc_cal) * 2.f / 1000.f;
+    batteryVoltage /= 2;
+
+    return batteryVoltage;
 }
 
 
@@ -360,30 +340,6 @@ static void cleanup_and_restart(void)
 }
 
 
-static void boot_application(void)
-{
-    ESP_LOGI(__func__, "Booting application.");
-
-    // Set firmware active
-    const esp_partition_t* partition = esp_partition_find_first(ESP_PARTITION_TYPE_APP,
-        ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL);
-    if (partition == NULL)
-    {
-        DisplayError("NO BOOT PART ERROR");
-        indicate_error();
-    }
-
-    esp_err_t err = esp_ota_set_boot_partition(partition);
-    if (err != ESP_OK)
-    {
-        DisplayError("BOOT SET ERROR");
-        indicate_error();
-    }
-
-    cleanup_and_restart();
-}
-
-
 static int sort_app_table_by_offset(const void * a, const void * b)
 {
     if ( (*(odroid_app_t*)a).startOffset < (*(odroid_app_t*)b).startOffset ) return -1;
@@ -511,15 +467,11 @@ static void write_app_table()
 }
 
 
-static void write_partition_table(const odroid_partition_t *parts, size_t count, size_t flashOffset)
+static void write_partition_table(const odroid_app_t *app)
 {
     esp_partition_info_t partitionTable[ESP_PARTITION_TABLE_MAX_ENTRIES];
     size_t nextPart = 0;
 
-    assert(count < ESP_PARTITION_TABLE_MAX_ENTRIES);
-    assert(parts && flashOffset >= firstAppOffset);
-
-    // Read table
     if (spi_flash_read(ESP_PARTITION_TABLE_OFFSET, &partitionTable, sizeof(partitionTable)) != ESP_OK)
     {
         DisplayError("PART TABLE READ ERROR");
@@ -537,46 +489,95 @@ static void write_partition_table(const odroid_partition_t *parts, size_t count,
         if (part->pos.offset >= firstAppOffset)
             continue;
         partitionTable[nextPart++] = *part;
+        ESP_LOGI(__func__, "Keeping partition #%d '%s'", nextPart - 1, part->label);
     }
 
-    ESP_LOGI(__func__, "nextPart=%d, flashOffset=%#08x", nextPart, flashOffset);
-
-    // Append app's partitions
-    for (int i = 0; i < count; ++i)
+    // Append app's partitions, if any
+    if (app)
     {
-        esp_partition_info_t* part = &partitionTable[nextPart++];
-        part->magic = ESP_PARTITION_MAGIC;
-        part->type = parts[i].type;
-        part->subtype = parts[i].subtype;
-        part->pos.offset = flashOffset;
-        part->pos.size = parts[i].length;
-        memcpy(&part->label, parts[i].label, 16);
-        part->flags = parts[i].flags;
+        size_t flashOffset = app->startOffset;
 
-        flashOffset += parts[i].length;
+        for (int i = 0; i < app->parts_count && i < ESP_PARTITION_TABLE_MAX_ENTRIES; ++i)
+        {
+            esp_partition_info_t* part = &partitionTable[nextPart++];
+            part->magic = ESP_PARTITION_MAGIC;
+            part->type = app->parts[i].type;
+            part->subtype = app->parts[i].subtype;
+            part->pos.offset = flashOffset;
+            part->pos.size = app->parts[i].length;
+            memcpy(&part->label, app->parts[i].label, 16);
+            part->flags = app->parts[i].flags;
+
+            flashOffset += app->parts[i].length;
+
+            ESP_LOGI(__func__, "Added partition #%d '%s'", nextPart - 1, part->label);
+        }
     }
 
-    // Mark remaining entries as invalid
+    // We must fill the rest with 0xFF, the boot loader checks magic = 0xFFFF, type = 0xFF, subtype = 0xFF
     while (nextPart < ESP_PARTITION_TABLE_MAX_ENTRIES)
     {
-        partitionTable[nextPart++].magic = 0xFFFF;
+        memset(&partitionTable[nextPart++], 0xFF, sizeof(esp_partition_info_t));
     }
 
-    // Erase partition table
     if (spi_flash_erase_range(ESP_PARTITION_TABLE_OFFSET, ERASE_BLOCK_SIZE) != ESP_OK)
     {
         DisplayError("PART TABLE ERASE ERROR");
         indicate_error();
     }
 
-    // Write new table
     if (spi_flash_write(ESP_PARTITION_TABLE_OFFSET, partitionTable, sizeof(partitionTable)) != ESP_OK)
     {
         DisplayError("PART TABLE WRITE ERROR");
         indicate_error();
     }
 
-    esp_partition_reload_table();
+    // esp_partition_reload_table();
+}
+
+
+static void boot_application(odroid_app_t *app)
+{
+    ESP_LOGI(__func__, "Booting application.");
+
+    if (app)
+    {
+        DisplayMessage("Updating partitions ...");
+        write_partition_table(app);
+    }
+
+    DisplayMessage("Setting boot partition ...");
+
+// This is the correct way of doing things, but we must patch esp-idf to allow us to reload the partition table
+// So, now, instead we just write the OTA partition ourselves. It is always the same (boot app OTA+0).
+#if 0
+    const esp_partition_t *partition = esp_partition_find_first(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL);
+
+    if (!partition)
+    {
+        DisplayError("NO BOOT PART ERROR");
+        indicate_error();
+    }
+
+    esp_err_t err = esp_ota_set_boot_partition(partition);
+    if (err != ESP_OK)
+    {
+        DisplayError("BOOT SET ERROR");
+        indicate_error();
+    }
+#else
+    uint32_t ota_data[8] = {1, 0, 0, 0, 0, 0, 0xFFFFFFFFU, 0x4743989A};
+
+    if (spi_flash_erase_range(0xD000, 0x1000) != ESP_OK
+        || spi_flash_write(0xD000, &ota_data, sizeof(ota_data)) != ESP_OK)
+    {
+        DisplayError("BOOT SET ERROR");
+        indicate_error();
+    }
+#endif
+
+    cleanup_and_restart();
 }
 
 
@@ -792,16 +793,6 @@ bool firmware_get_info(const char* filename, odroid_fw_t* outData)
 firmware_get_info_err:
     fclose(file);
     return false;
-}
-
-
-void flash_utility()
-{
-    // Code to flash utility.bin.
-    // Because leaving it in flash_firmware results in multiple copies being flashed.
-    //FILE* util = fopen("/sd/odroid/utility.bin", "rb");
-    //util_part.type = ESP_PARTITION_TYPE_APP;
-    //util_part.subtype = ESP_PARTITION_SUBTYPE_APP_TEST;
 }
 
 
@@ -1027,11 +1018,7 @@ void flash_firmware(const char* fullPath)
         if (btn == ODROID_INPUT_B) return;
     }
 
-    // Write partition table
-    write_partition_table(app->parts, app->parts_count, app->startOffset);
-
-    // boot firmware
-    boot_application();
+    boot_application(app);
 }
 
 
@@ -1067,7 +1054,9 @@ static void ui_draw_indicators(int page, int totalPages)
     UG_PutString(4, 4, tempstring);
 
     // Battery indicator
-    sprintf(tempstring, "%d%%", batteryPercent);
+    int percent = (read_battery() - BATTERY_VMIN) / (BATTERY_VMAX - BATTERY_VMIN) * 100.f;
+    percent = percent > 100 ? 100 : ((percent < 0) ? 0 : percent);
+    sprintf(tempstring, "%d%%", percent);
     UG_PutString(SCREEN_WIDTH - (9 * strlen(tempstring)) - 4, 4, tempstring);
 }
 
@@ -1343,8 +1332,6 @@ static void start_normal(void)
     }
     nvs_get_i32(nvs_h, "display_order", &displayOrder);
 
-    xTaskCreate(&battery_task, "battery_task", 4096, NULL, 5, NULL);
-
     fwInfoBuffer = safe_alloc(sizeof(odroid_fw_t));
     dataBuffer = safe_alloc(FLASH_BLOCK_SIZE);
 
@@ -1384,13 +1371,7 @@ static void start_normal(void)
 	        else if (btn == ODROID_INPUT_A)
 	        {
                 ui_draw_title("ODROID-GO", PROJECT_VER);
-                DisplayMessage("Updating partitions ...");
-
-                odroid_app_t *app = &apps[currentItem];
-                write_partition_table(app->parts, app->parts_count, app->startOffset);
-
-                DisplayMessage("Setting boot partition ...");
-                boot_application();
+                boot_application(apps + currentItem);
 	        }
             else if (btn == ODROID_INPUT_SELECT)
             {
@@ -1426,39 +1407,46 @@ static void start_normal(void)
                 {5, "Restart System", true}
             };
 
-            int choice = ui_choose_dialog(options, 6, true);
-            char* fileName;
+            odroid_app_t *app = &apps[currentItem];
+            char *fileName;
+            size_t offset;
 
-            switch(choice) {
+            switch (ui_choose_dialog(options, 6, true))
+            {
                 case 0: // Install from SD Card
-                    fileName = ui_choose_file(FIRMWARE_PATH);
-                    if (fileName) {
+                    if ((fileName = ui_choose_file(FIRMWARE_PATH))) {
                         flash_firmware(fileName);
                         free(fileName);
                     }
                     break;
                 case 1: // Remove selected app
-                    memmove(&apps[currentItem], &apps[currentItem + 1],
-                            (apps_max - currentItem) * sizeof(odroid_app_t));
+                    memmove(app, app + 1, (apps_max - currentItem) * sizeof(odroid_app_t));
                     apps_count--;
                     write_app_table();
                     break;
                 case 2: // Erase selected app's NVS
-                    write_partition_table(apps[currentItem].parts,
-                        apps[currentItem].parts_count, apps[currentItem].startOffset);
-                    if (nvs_flash_erase() == ESP_OK) {
-                        DisplayNotification("Operation successful!");
-                        queuedBtn = input_wait_for_button_press(100);
-                    } else {
-                        DisplayNotification("An error has occurred!");
-                        queuedBtn = input_wait_for_button_press(200);
+                    offset = app->startOffset;
+                    for (int i = 0; i < app->parts_count; i++)
+                    {
+                        odroid_partition_t *part = &app->parts[i];
+                        if (part->type == 1 && part->subtype == ESP_PARTITION_SUBTYPE_DATA_NVS)
+                        {
+                            if (spi_flash_erase_range(offset, part->length) == ESP_OK)
+                                DisplayNotification("Operation successful!");
+                            else
+                                DisplayNotification("An error has occurred!");
+                        }
+                        offset += part->length;
                     }
+                    queuedBtn = input_wait_for_button_press(200);
                     break;
                 case 3: // Erase all apps
                     memset(apps, 0xFF, apps_max * sizeof(odroid_app_t));
                     apps_count = 0;
+                    currentItem = 0;
+                    app = &apps[0];
                     write_app_table();
-                    write_partition_table(NULL, 0, 0);
+                    write_partition_table(NULL);
                     break;
                 case 4: // Format SD Card
                     ui_draw_title("Format SD Card", PROJECT_VER);
@@ -1494,7 +1482,7 @@ static void start_normal(void)
             DisplayNotification("Press B again to boot last app.");
             queuedBtn = input_wait_for_button_press(100);
             if (queuedBtn == ODROID_INPUT_B) {
-                boot_application();
+                boot_application(NULL);
             }
         }
     }
@@ -1503,18 +1491,33 @@ static void start_normal(void)
 
 static void start_install(void)
 {
-    const esp_partition_t *current = esp_ota_get_running_partition();
-    size_t addr = current->address - 0x10000;
-    size_t size = 0x10000 + current->size;
-    void *data = safe_alloc(size);
+    ui_draw_title("Multi-firmware Installer", "");
 
-    // if (!user_confirm_flash_erase)
+    for (int i = 5; i > 0; --i)
     {
-        // reboot to factory
+        sprintf(tempstring, "Installing in %d seconds...", i);
+        DisplayMessage(tempstring);
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
+    DisplayMessage("Installing...");
+
+    const esp_partition_t *payload = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "payload");
+
+    // We could fall back to copying the current partition and creating the partition table
+    // ourselves but we'd be missing the calibration data. Might handle this later...
+    if (!payload)
+    {
+        DisplayError("CORRUPT INSTALLER ERROR");
+        indicate_error();
+    }
+
+    size_t size = ALIGN_ADDRESS(payload->size, FLASH_BLOCK_SIZE);
+    void *data = safe_alloc(size);
+
     // We must copy the data to RAM first because our data address space is full, can't mmap
-    if (spi_flash_read(addr, data, size) != ESP_OK)
+    if (spi_flash_read(payload->address, data, payload->size) != ESP_OK)
     {
         DisplayError("PART TABLE WRITE ERROR");
         indicate_error();

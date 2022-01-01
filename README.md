@@ -2,31 +2,43 @@
 Odroid-go-multi-firmware is an improvement of the official Odroid GO firmware. It allows you to keep multiple applications installed in the flash and switch instantly between them. You can think of it as a multi-boot loader.
 
 
+# Usage
+Holding **B** while powering up the device will bring you to the boot menu.
+
+
 # Installation
+
+_Note: There is no risk in flashing your Odroid GO. You can always recover and return to the stock firmware by following ODROID's guide (method 2 below)._
+
+### Method 1: Self-installer
+
+This is the easiest method, no need for drivers or flashing software. But it isn't as well tested.
+
+1. Copy the file `odroid-go-multi-firmware-XXX.fw` to your sdcard in the folder `/odroid/firmware`
+2. Power up your device while holding B
+3. Flash the self-installer and run it
+
+
+### Method 2: USB flashing
 
 Follow these instructions: https://wiki.odroid.com/odroid_go/firmware_update but use the .img provided here.
 
-*Note: To preserve your flashed applications when upgrading you can ignore the ERASE step.*
-
-To access the boot menu you then hold **B** while booting, as before.
-
-_Note: There is no risk in flashing your Odroid GO and you can easily return to the stock firmware by following the instructions again using their official .img file._
+_Note: If you are familiar with esptool, you just have to flash `odroid-go-multi-firmware-XXX.fw` to offset 0x0._
 
 
 # Compilation
-The official esp-idf version 3.1 or newer is required and you need to apply the following patches (found in tools/patches):
+The official esp-idf version 3.1 or newer is required and to improve SD Card support you should this patch:
 
-- esp-idf-partition-patch.diff
-- esp-idf-sdcard-patch.diff
+- tools/patches/esp-idf-sdcard-patch.diff
 
 _Note: Those patches do not introduce breaking changes to non-GO (standard ESP32) projects and can safely be applied to your global esp-idf installation._
 
-
 ## Build Steps:
-1. Compile firmware: `make -j4` or `idf.py build`
-2. And finally:
-   - To produce .img: `./mkimg.sh`
-   - To flash and debug: `make flash monitor`
+1. Compile firmware: `idf.py build`
+2. And then:
+   - To produce image files: `python tools/pack.py`
+   - To flash and debug: `idf.py flash monitor`
+
 
 # Technical information
 

@@ -108,7 +108,7 @@ static void input_task(void *arg)
             switch (debounce[i] & 0x03)
             {
                 case 0x00:
-                    gamepad_state &= (1 << i);
+                    gamepad_state &= ~(1 << i);
                     break;
 
                 case 0x03:

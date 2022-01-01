@@ -1,16 +1,3 @@
-diff --git a/components/spi_flash/include/esp_partition.h b/components/spi_flash/include/esp_partition.h
-index f3d5a424a..980f165c6 100644
---- a/components/spi_flash/include/esp_partition.h
-+++ b/components/spi_flash/include/esp_partition.h
-@@ -104,6 +104,8 @@ typedef struct {
-     bool encrypted;                     /*!< flag is set to true if partition is encrypted */
- } esp_partition_t;
-
-+void esp_partition_reload_table();
-+
- /**
-  * @brief Find partition based on one or more parameters
-  *
 diff --git a/components/spi_flash/partition.c b/components/spi_flash/partition.c
 index 400329199..1b6ab8be8 100644
 --- a/components/spi_flash/partition.c

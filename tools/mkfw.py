@@ -20,6 +20,7 @@ fw_data = struct.pack(
 
 fw_size = 0
 fw_part = 0
+fw_next_ota = 16 # First OTA partition
 pos = 4
 
 while pos < len(sys.argv):
@@ -30,8 +31,10 @@ while pos < len(sys.argv):
     filename = sys.argv[pos + 4]
     pos += 5
 
-    if not subtype:
-        subtype = 16 + fw_part # OTA starts at 16
+    if partype == 0:
+        if not subtype:
+            subtype = fw_next_ota
+        fw_next_ota = subtype + 1
 
     data = readfile(filename)
     real_size = max(size, math.ceil(len(data) / 0x10000) * 0x10000)
