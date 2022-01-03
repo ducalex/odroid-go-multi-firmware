@@ -37,19 +37,18 @@
     #define PROJECT_VER "n/a"
 #endif
 
-#define APP_MAGIC 0x1207
-
-#define APP_SORT_OFFSET             0b0000
-#define APP_SORT_SEQUENCE           0b0010
-#define APP_SORT_DESCRIPTION        0b0100
-#define APP_SORT_MAX                0b0101
-#define APP_SORT_DIR_ASC            0b0000
-#define APP_SORT_DIR_DESC           0b0001
+#define APP_TABLE_MAGIC             0x1207
+#define APP_NVS_SIZE                0x3000
 
 #define FLASH_BLOCK_SIZE            (64 * 1024)
 #define ERASE_BLOCK_SIZE            (4 * 1024)
 
-#define APP_NVS_SIZE                0x3000
+#define LIST_SORT_OFFSET            0b0000
+#define LIST_SORT_SEQUENCE          0b0010
+#define LIST_SORT_DESCRIPTION       0b0100
+#define LIST_SORT_MAX               0b0101
+#define LIST_SORT_DIR_ASC           0b0000
+#define LIST_SORT_DIR_DESC          0b0001
 
 #define FIRMWARE_HEADER_SIZE        (24)
 #define FIRMWARE_DESCRIPTION_SIZE   (40)
@@ -57,24 +56,18 @@
 #define FIRMWARE_TILE_WIDTH         (86)
 #define FIRMWARE_TILE_HEIGHT        (48)
 
-#define FIRMWARE_PATH SDCARD_BASE_PATH "/odroid/firmware"
+#define FIRMWARE_PATH               SDCARD_BASE_PATH "/odroid/firmware"
 
-#define BATTERY_VMAX (4.20f)
-#define BATTERY_VMIN (3.30f)
+#define BATTERY_VMAX                (4.20f)
+#define BATTERY_VMIN                (3.30f)
 
-#define ITEM_COUNT (4)
+#define ITEM_COUNT                  ((SCREEN_HEIGHT-32)/52)
 
 #define ALIGN_ADDRESS(val, alignment) (((val & (alignment-1)) != 0) ? (val & ~(alignment-1)) + alignment : val)
 #define SET_STATUS_LED(on) gpio_set_level(GPIO_NUM_2, on);
 
-const char* HEADER_V00_01 = "ODROIDGO_FIRMWARE_V00_01";
+const char *HEADER_V00_01 = "ODROIDGO_FIRMWARE_V00_01";
 
-
-// <partition type=0x00 subtype=0x00 label='name' flags=0x00000000 length=0x00000000>
-// 	<data length=0x00000000>
-// 		[...]
-// 	</data>
-// </partition>
 typedef struct
 {
     uint8_t type;
@@ -125,7 +118,6 @@ typedef struct
     size_t offset;
     size_t size;
 } odroid_flash_block_t;
-// ------
 
 typedef struct
 {
@@ -137,13 +129,8 @@ typedef struct
 static odroid_app_t *apps;
 static int apps_count = -1;
 static int apps_max = 4;
-static int nextInstallSeq = 0;
-
-// We scan the table to find the real value but this is a reasonable default
-static size_t firstAppOffset = 0x100000;
-
-static odroid_fw_t *fwInfoBuffer;
-static uint8_t *dataBuffer;
+static int apps_seq = 0;
+static int firstAppOffset = 0x100000; // We scan the table to find the real value but this is a reasonable default
 
 static uint16_t fb[SCREEN_WIDTH * SCREEN_HEIGHT];
 static UG_GUI gui;
@@ -173,8 +160,7 @@ static float read_battery(void)
     return batteryVoltage;
 }
 
-
-void indicate_error()
+static void indicate_error(void)
 {
     int level = 0;
     while (true) {
@@ -189,115 +175,94 @@ static void pset(UG_S16 x, UG_S16 y, UG_COLOR color)
     fb[y * SCREEN_WIDTH + x] = color;
 }
 
-static void ui_draw_image(short x, short y, short width, short height, uint16_t* data)
-{
-    for (short i = 0 ; i < height; ++i)
-    {
-        for (short j = 0; j < width; ++j)
-        {
-            uint16_t pixel = data[i * width + j];
-            UG_DrawPixel(x + j, y + i, pixel);
-        }
-    }
-}
-
 static void ui_draw_title(char*, char*);
 
-static void UpdateDisplay()
+static void UpdateDisplay(void)
 {
     ili9341_write_rectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, fb);
 }
 
 static void DisplayError(const char *message)
 {
+    int left = (SCREEN_WIDTH / 2) - (strlen(message) * 9 / 2);
+    int top = (SCREEN_HEIGHT / 2) - (12 / 2);
     UG_FontSelect(&FONT_8X12);
-    short left = (SCREEN_WIDTH / 2) - (strlen(message) * 9 / 2);
-    short top = (SCREEN_HEIGHT / 2) - (12 / 2);
     UG_SetForecolor(C_RED);
     UG_SetBackcolor(C_WHITE);
-    UG_FillFrame(0, top, 319, top + 12, C_WHITE);
+    UG_FillFrame(0, top, SCREEN_WIDTH-1, top + 12, C_WHITE);
     UG_PutString(left, top, message);
-
     UpdateDisplay();
 }
 
 static void DisplayMessage(const char *message)
 {
+    int left = (SCREEN_WIDTH / 2) - (strlen(message) * 9 / 2);
+    int top = (SCREEN_HEIGHT / 2) + 8 + (12 / 2) + 16;
     UG_FontSelect(&FONT_8X12);
-    short left = (SCREEN_WIDTH / 2) - (strlen(message) * 9 / 2);
-    short top = (SCREEN_HEIGHT / 2) + 8 + (12 / 2) + 16;
     UG_SetForecolor(C_BLACK);
     UG_SetBackcolor(C_WHITE);
-    UG_FillFrame(0, top, 319, top + 12, C_WHITE);
+    UG_FillFrame(0, top, SCREEN_WIDTH-1, top + 12, C_WHITE);
     UG_PutString(left, top, message);
-
     UpdateDisplay();
 }
 
 static void DisplayNotification(const char* message)
 {
+    int left = (SCREEN_WIDTH / 2) - (strlen(message) * 9 / 2);
+    int top = SCREEN_HEIGHT - 17;
     UG_FontSelect(&FONT_8X12);
-    short left = (SCREEN_WIDTH / 2) - (strlen(message) * 9 / 2);
-    short top = 239 - 16;
     UG_SetForecolor(C_WHITE);
     UG_SetBackcolor(C_BLUE);
-    UG_FillFrame(0, top, 319, top + 16, C_BLUE);
+    UG_FillFrame(0, top, SCREEN_WIDTH-1, top + 16, C_BLUE);
     UG_PutString(left, top + 3, message);
     UpdateDisplay();
 }
 
 static void DisplayProgress(int percent)
 {
-    if (percent > 100) percent = 100;
-
     const int WIDTH = 200;
     const int HEIGHT = 12;
-    const int FILL_WIDTH = WIDTH * (percent / 100.0f);
-
-    short left = (SCREEN_WIDTH / 2) - (WIDTH / 2);
-    short top = (SCREEN_HEIGHT / 2) - (HEIGHT / 2) + 16;
+    const int FILL_WIDTH = WIDTH * ((percent > 100 ? 100 : percent) / 100.0f);
+    int left = (SCREEN_WIDTH / 2) - (WIDTH / 2);
+    int top = (SCREEN_HEIGHT / 2) - (HEIGHT / 2) + 16;
     UG_FillFrame(left - 1, top - 1, left + WIDTH + 1, top + HEIGHT + 1, C_WHITE);
     UG_DrawFrame(left - 1, top - 1, left + WIDTH + 1, top + HEIGHT + 1, C_BLACK);
-
     if (FILL_WIDTH > 0)
-    {
         UG_FillFrame(left, top, left + FILL_WIDTH, top + HEIGHT, C_GREEN);
-    }
-
-    //UpdateDisplay();
 }
 
 static void DisplayFooter(char* message)
 {
+    int left = (SCREEN_WIDTH / 2) - (strlen(message) * 9 / 2);
+    int top = SCREEN_HEIGHT - (16 * 2) - 8;
     UG_FontSelect(&FONT_8X12);
-    short left = (SCREEN_WIDTH / 2) - (strlen(message) * 9 / 2);
-    short top = SCREEN_HEIGHT - (16 * 2) - 8;
     UG_SetForecolor(C_BLACK);
     UG_SetBackcolor(C_WHITE);
-    UG_FillFrame(0, top, 319, top + 12, C_WHITE);
+    UG_FillFrame(0, top, SCREEN_WIDTH-1, top + 12, C_WHITE);
     UG_PutString(left, top, message);
-
     UpdateDisplay();
 }
 
 static void DisplayHeader(char* message)
 {
+    int left = (SCREEN_WIDTH / 2) - (strlen(message) * 9 / 2);
+    int top = (16 + 8);
     UG_FontSelect(&FONT_8X12);
-    short left = (SCREEN_WIDTH / 2) - (strlen(message) * 9 / 2);
-    short top = (16 + 8);
     UG_SetForecolor(C_BLACK);
     UG_SetBackcolor(C_WHITE);
-    UG_FillFrame(0, top, 319, top + 12, C_WHITE);
+    UG_FillFrame(0, top, SCREEN_WIDTH-1, top + 12, C_WHITE);
     UG_PutString(left, top, message);
-
     UpdateDisplay();
 }
 
-static void DisplayTile(uint16_t *tileData)
+static void DisplayTile(const uint16_t *tileData)
 {
-    const uint16_t tileLeft = (SCREEN_WIDTH / 2) - (FIRMWARE_TILE_WIDTH / 2);
-    const uint16_t tileTop = (16 + 16 + 16);
-    ui_draw_image(tileLeft, tileTop, FIRMWARE_TILE_WIDTH, FIRMWARE_TILE_HEIGHT, tileData);
+    int tileLeft = (SCREEN_WIDTH / 2) - (FIRMWARE_TILE_WIDTH / 2);
+    int tileTop = (16 + 16 + 16);
+
+    for (int i = 0 ; i < FIRMWARE_TILE_HEIGHT; ++i)
+        for (int j = 0; j < FIRMWARE_TILE_WIDTH; ++j)
+            UG_DrawPixel(tileLeft + j, tileTop + i, tileData[i * FIRMWARE_TILE_WIDTH + j]);
 
     // Tile border
     UG_DrawFrame(tileLeft - 1, tileTop - 1, tileLeft + FIRMWARE_TILE_WIDTH, tileTop + FIRMWARE_TILE_HEIGHT, C_BLACK);
@@ -360,13 +325,13 @@ static int sort_app_table_by_alphabet(const void * a, const void * b)
 static void sort_app_table(int newMode)
 {
     switch(newMode & ~1) {
-        case APP_SORT_SEQUENCE:
+        case LIST_SORT_SEQUENCE:
             qsort(apps, apps_count, sizeof(odroid_app_t), &sort_app_table_by_sequence);
             break;
-        case APP_SORT_DESCRIPTION:
+        case LIST_SORT_DESCRIPTION:
             qsort(apps, apps_count, sizeof(odroid_app_t), &sort_app_table_by_alphabet);
             break;
-        case APP_SORT_OFFSET:
+        case LIST_SORT_OFFSET:
         default:
             qsort(apps, apps_count, sizeof(odroid_app_t), &sort_app_table_by_offset);
             break;
@@ -393,32 +358,32 @@ static void read_app_table(void)
     const esp_partition_t *app_table_part = esp_partition_find_first(
         ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, MFW_DATA_PARTITION);
 
-    if (!app_table_part) {
+    if (!app_table_part)
+    {
         DisplayError("NO APP TABLE ERROR");
         indicate_error();
+    }
+    else if (!apps)
+    {
+        apps = safe_alloc(app_table_part->size);
     }
 
     apps_max = (app_table_part->size / sizeof(odroid_app_t));
     apps_count = 0;
+    apps_seq = 0;
 
-    if (!apps) {
-        apps = safe_alloc(app_table_part->size);
-    }
-
-    esp_err_t err = esp_partition_read(app_table_part, 0, (void*)apps, app_table_part->size);
-    if (err != ESP_OK)
+    if (esp_partition_read(app_table_part, 0, apps, app_table_part->size) != ESP_OK)
     {
         DisplayError("APP TABLE READ ERROR");
         indicate_error();
     }
 
-    for (int i = 0; i < apps_max; i++) {
-        if (apps[i].magic != APP_MAGIC) {
+    for (int i = 0; i < apps_max; i++)
+    {
+        if (apps[i].magic != APP_TABLE_MAGIC)
             break;
-        }
-        if (apps[i].installSeq >= nextInstallSeq) {
-            nextInstallSeq = apps[i].installSeq + 1;
-        }
+        if (apps[i].installSeq >= apps_seq)
+            apps_seq = apps[i].installSeq + 1;
         apps_count++;
     }
 
@@ -432,12 +397,11 @@ static void read_app_table(void)
 
 static void write_app_table()
 {
-    esp_err_t err;
-
     const esp_partition_t *app_table_part = esp_partition_find_first(
         ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, MFW_DATA_PARTITION);
 
-    if (!apps || !app_table_part) {
+    if (!apps || !app_table_part)
+    {
         DisplayError("NO APP TABLE ERROR");
         indicate_error();
     }
@@ -447,17 +411,13 @@ static void write_app_table()
         memset(&apps[i], 0xff, sizeof(odroid_app_t));
     }
 
-    //sort_app_table(APP_SORT_OFFSET); // Causes issues in flash_firmware
-
-    err = esp_partition_erase_range(app_table_part, 0, app_table_part->size);
-    if (err != ESP_OK)
+    if (esp_partition_erase_range(app_table_part, 0, app_table_part->size) != ESP_OK)
     {
         DisplayError("APP TABLE ERASE ERROR");
         indicate_error();
     }
 
-    err = esp_partition_write(app_table_part, 0, (void*)apps, app_table_part->size);
-    if (err != ESP_OK)
+    if (esp_partition_write(app_table_part, 0, apps, app_table_part->size) != ESP_OK)
     {
         DisplayError("APP TABLE WRITE ERROR");
         indicate_error();
@@ -560,8 +520,7 @@ static void boot_application(odroid_app_t *app)
         indicate_error();
     }
 
-    esp_err_t err = esp_ota_set_boot_partition(partition);
-    if (err != ESP_OK)
+    if (esp_ota_set_boot_partition(partition) != ESP_OK)
     {
         DisplayError("BOOT SET ERROR");
         indicate_error();
@@ -581,13 +540,13 @@ static void boot_application(odroid_app_t *app)
 }
 
 
-static void defrag_flash()
+static void defrag_flash(void)
 {
     size_t nextStartOffset = firstAppOffset;
     size_t totalBytesToMove = 0;
     size_t totalBytesMoved = 0;
 
-    sort_app_table(APP_SORT_OFFSET);
+    sort_app_table(LIST_SORT_OFFSET);
 
     // First loop to get total for the progress bar
     for (int i = 0; i < apps_count; i++)
@@ -603,6 +562,8 @@ static void defrag_flash()
     sprintf(tempstring, "Moving: %.2f MB", (float)totalBytesToMove / 1024 / 1024);
     ui_draw_title("Defragmenting flash", tempstring);
     DisplayHeader("Making some space...");
+
+    void *dataBuffer = safe_alloc(FLASH_BLOCK_SIZE);
 
     for (int i = 0; i < apps_count; i++)
     {
@@ -640,21 +601,22 @@ static void defrag_flash()
         nextStartOffset = apps[i].endOffset + 1;
     }
 
+    free(dataBuffer);
+
     write_app_table();
 }
 
 
-void find_free_blocks(odroid_flash_block_t **blocks, size_t *count, size_t *totalFreeSpace)
+static void find_free_blocks(odroid_flash_block_t **blocks, size_t *count, size_t *totalFreeSpace)
 {
     size_t flashSize = spi_flash_get_chip_size();
     size_t previousBlockEnd = firstAppOffset;
 
-    (*blocks) = safe_alloc(sizeof(odroid_flash_block_t) * 32);
+    *blocks = safe_alloc(sizeof(odroid_flash_block_t) * 32);
+    *totalFreeSpace = 0;
+    *count = 0;
 
-    (*totalFreeSpace) = 0;
-    (*count) = 0;
-
-    sort_app_table(APP_SORT_OFFSET);
+    sort_app_table(LIST_SORT_OFFSET);
 
     for (int i = 0; i < apps_count; i++)
     {
@@ -664,7 +626,7 @@ void find_free_blocks(odroid_flash_block_t **blocks, size_t *count, size_t *tota
             odroid_flash_block_t *block = &(*blocks)[(*count)++];
             block->offset = previousBlockEnd;
             block->size = free_space;
-            (*totalFreeSpace) += block->size;
+            *totalFreeSpace += block->size;
             ESP_LOGI(__func__, "Found free block: %d 0x%x %d", i, block->offset, free_space / 1024);
         }
 
@@ -675,13 +637,12 @@ void find_free_blocks(odroid_flash_block_t **blocks, size_t *count, size_t *tota
         odroid_flash_block_t *block = &(*blocks)[(*count)++];
         block->offset = previousBlockEnd;
         block->size = (flashSize - previousBlockEnd);
-        (*totalFreeSpace) += block->size;
+        *totalFreeSpace += block->size;
         ESP_LOGI(__func__, "Found free block: end 0x%x %d", block->offset, block->size / 1024);
     }
 }
 
-
-int find_free_block(size_t size, bool defragIfNeeded)
+static int find_free_block(size_t size, bool defragIfNeeded)
 {
     odroid_flash_block_t *blocks;
     size_t count, totalFreeSpace;
@@ -708,22 +669,21 @@ int find_free_block(size_t size, bool defragIfNeeded)
 }
 
 
-bool firmware_get_info(const char* filename, odroid_fw_t* outData)
+static odroid_fw_t *firmware_get_info(const char *filename)
 {
-    size_t count, file_size;
+    odroid_fw_t *outData = safe_alloc(sizeof(odroid_fw_t));
 
     FILE* file = fopen(filename, "rb");
     if (!file)
-    {
-        return false;
-    }
+        goto firmware_get_info_err;
+
+    size_t file_size;
 
     fseek(file, 0, SEEK_END);
     file_size = ftell(file);
     fseek(file, 0, SEEK_SET);
 
-    count = fread(outData, sizeof(outData->fileHeader), 1, file);
-    if (count != 1)
+    if (!fread(&outData->fileHeader, sizeof(outData->fileHeader), 1, file))
     {
         goto firmware_get_info_err;
     }
@@ -788,49 +748,44 @@ bool firmware_get_info(const char* filename, odroid_fw_t* outData)
     outData->parts_count++;
 
     fclose(file);
-    return true;
+    return outData;
 
 firmware_get_info_err:
+    free(outData);
     fclose(file);
-    return false;
+    return NULL;
 }
 
 
-void flash_firmware(const char* fullPath)
+static void flash_firmware(const char *fullPath)
 {
-    ESP_LOGD(__func__, "HEAP=%#010x", esp_get_free_heap_size());
-    SET_STATUS_LED(0);
-
-    size_t count;
-    bool can_proceed = true;
-
-    sort_app_table(APP_SORT_OFFSET);
-
-    ui_draw_title("Install Application", "Destination: Pending");
-    UpdateDisplay();
+    odroid_app_t *app = memset(&apps[apps_count], 0x00, sizeof(*app));
+    odroid_fw_t *fw = firmware_get_info(fullPath);
+    void *dataBuffer = safe_alloc(FLASH_BLOCK_SIZE);
 
     ESP_LOGI(__func__, "Flashing file: %s", fullPath);
 
-    FILE* file = fopen(fullPath, "rb");
-    if (file == NULL)
-    {
-        DisplayError("FILE OPEN ERROR");
-        indicate_error();
-    }
+    sort_app_table(LIST_SORT_OFFSET);
+    ui_draw_title("Install Application", "Destination: Pending");
+    DisplayFooter("[B] Go Back");
+    SET_STATUS_LED(0);
 
-    odroid_fw_t *fw = fwInfoBuffer;
-
-    if (!firmware_get_info(fullPath, fw))
+    if (!fw)
     {
-        // To do: Make it show what is invalid
-        DisplayError("INVALID FIRMWARE FILE");
-        can_proceed = false;
+        DisplayError("INVALID FIRMWARE FILE"); // To do: Make it show what is invalid
+        while (input_wait_for_button_press(-1) != ODROID_INPUT_B);
+        free(dataBuffer), free(fw);
+        return;
     }
 
     int currentFlashAddress = find_free_block(fw->flashSize, true);
-
-    odroid_app_t *app = &apps[apps_count];
-    memset(app, 0x00, sizeof(odroid_app_t));
+    if (currentFlashAddress == -1)
+    {
+        DisplayError("NOT ENOUGH FREE SPACE");
+        while (input_wait_for_button_press(-1) != ODROID_INPUT_B);
+        free(dataBuffer), free(fw);
+        return;
+    }
 
     strncpy(app->description, fw->fileHeader.description, FIRMWARE_DESCRIPTION_SIZE-1);
     strncpy(app->filename, strrchr(fullPath, '/'), FIRMWARE_DESCRIPTION_SIZE-1);
@@ -846,45 +801,32 @@ void flash_firmware(const char* fullPath)
     DisplayHeader(app->description);
     DisplayTile(app->tile);
 
-    if (currentFlashAddress == -1)
-    {
-        DisplayError("NOT ENOUGH FREE SPACE");
-        can_proceed = false;
-    }
-
-    if (can_proceed)
-    {
-        DisplayMessage("[START]");
-    }
-
+    DisplayMessage("[START]");
     DisplayFooter("[B] Cancel");
 
-    while (1) {
+    while (1)
+    {
         int btn = input_wait_for_button_press(-1);
-
-        if (btn == ODROID_INPUT_START && can_proceed) break;
-        if (btn == ODROID_INPUT_B)
-        {
-            fclose(file);
-            return;
-        }
+        if (btn == ODROID_INPUT_START) break;
+        if (btn == ODROID_INPUT_B) return;
     }
-
-    SET_STATUS_LED(1);
 
     DisplayMessage("Verifying ...");
     DisplayFooter("");
 
+    SET_STATUS_LED(1);
 
-    // Verify file integerity
-    ESP_LOGI(__func__, "Expected checksum: %#010x",fw->checksum);
-
-    fseek(file, 0, SEEK_SET);
+    FILE *file = fopen(fullPath, "rb");
+    if (file == NULL)
+    {
+        DisplayError("FILE OPEN ERROR");
+        indicate_error();
+    }
 
     uint32_t checksum = 0;
-    while(true)
+    while (true)
     {
-        count = fread(dataBuffer, 1, FLASH_BLOCK_SIZE, file);
+        size_t count = fread(dataBuffer, 1, FLASH_BLOCK_SIZE, file);
         if (ftell(file) == fw->fileSize)
         {
             count -= 4;
@@ -901,13 +843,12 @@ void flash_firmware(const char* fullPath)
         DisplayError("CHECKSUM MISMATCH ERROR");
         indicate_error();
     }
-
     ESP_LOGI(__func__, "Checksum OK: %#010x", checksum);
 
     // restore location to end of description
     fseek(file, fw->dataOffset, SEEK_SET);
 
-    app->magic = APP_MAGIC;
+    app->magic = APP_TABLE_MAGIC;
     app->startOffset = currentFlashAddress;
 
     // Copy the firmware
@@ -930,8 +871,7 @@ void flash_firmware(const char* fullPath)
         int eraseBlocks = slot->length / ERASE_BLOCK_SIZE;
         if (eraseBlocks * ERASE_BLOCK_SIZE < slot->length) ++eraseBlocks;
 
-        esp_err_t ret = spi_flash_erase_range(currentFlashAddress, eraseBlocks * ERASE_BLOCK_SIZE);
-        if (ret != ESP_OK)
+        if (spi_flash_erase_range(currentFlashAddress, eraseBlocks * ERASE_BLOCK_SIZE) != ESP_OK)
         {
             ESP_LOGE(__func__, "spi_flash_erase_range failed. eraseBlocks=%d", eraseBlocks);
             DisplayError("ERASE ERROR");
@@ -954,7 +894,7 @@ void flash_firmware(const char* fullPath)
                 DisplayMessage(tempstring);
 
                 // read
-                count = fread(dataBuffer, 1, FLASH_BLOCK_SIZE, file);
+                size_t count = fread(dataBuffer, 1, FLASH_BLOCK_SIZE, file);
                 if (count <= 0)
                 {
                     DisplayError("DATA READ ERROR");
@@ -967,8 +907,7 @@ void flash_firmware(const char* fullPath)
                 }
 
                 // flash
-                ret = spi_flash_write(currentFlashAddress + offset, dataBuffer, count);
-                if (ret != ESP_OK)
+                if (spi_flash_write(currentFlashAddress + offset, dataBuffer, count) != ESP_OK)
         		{
         			ESP_LOGE(__func__, "spi_flash_write failed. address=%#08x", currentFlashAddress + offset);
                     DisplayError("WRITE ERROR");
@@ -997,12 +936,14 @@ void flash_firmware(const char* fullPath)
     }
 
     fclose(file);
+    free(fw);
+    free(dataBuffer);
 
     // 64K align our endOffset
     app->endOffset = ALIGN_ADDRESS(currentFlashAddress, FLASH_BLOCK_SIZE) - 1;
 
     // Remember the install order, for display sorting
-    app->installSeq = nextInstallSeq++;
+    app->installSeq = apps_seq++;
 
     // Write app table
     apps_count++; // Everything went well, acknowledge the new app
@@ -1011,9 +952,9 @@ void flash_firmware(const char* fullPath)
     DisplayMessage("Ready !");
     DisplayFooter("[B] Go Back   |   [A] Boot");
 
-    while (1) {
+    while (1)
+    {
         int btn = input_wait_for_button_press(-1);
-
         if (btn == ODROID_INPUT_A) break;
         if (btn == ODROID_INPUT_B) return;
     }
@@ -1024,25 +965,19 @@ void flash_firmware(const char* fullPath)
 
 static void ui_draw_title(char* TITLE, char* FOOTER)
 {
-    UG_FillFrame(0, 0, 319, 239, C_WHITE);
+    int titleLeft = (SCREEN_WIDTH / 2) - (strlen(TITLE) * 9 / 2);
+    int footerLeft = (SCREEN_WIDTH / 2) - (strlen(FOOTER) * 9 / 2);
 
-    // Header
-    UG_FillFrame(0, 0, 319, 15, C_MIDNIGHT_BLUE);
+    UG_FillFrame(0, 0, SCREEN_WIDTH-1, 15, C_MIDNIGHT_BLUE);
+    UG_FillFrame(0, 16, SCREEN_WIDTH-1, SCREEN_HEIGHT - 16 * 2 - 1, C_WHITE);
+    UG_FillFrame(0, SCREEN_HEIGHT - 17, SCREEN_WIDTH-1, SCREEN_HEIGHT-1, C_MIDNIGHT_BLUE);
     UG_FontSelect(&FONT_8X8);
-    const short titleLeft = (SCREEN_WIDTH / 2) - (strlen(TITLE) * 9 / 2);
+    UG_SetBackcolor(C_MIDNIGHT_BLUE);
     UG_SetForecolor(C_WHITE);
-    UG_SetBackcolor(C_MIDNIGHT_BLUE);
     UG_PutString(titleLeft, 4, TITLE);
-
-    // Footer
-    UG_FontSelect(&FONT_8X8);
-    UG_SetBackcolor(C_MIDNIGHT_BLUE);
     UG_SetForecolor(C_LIGHT_GRAY);
-    UG_FillFrame(0, 239 - 16, 319, 239, C_MIDNIGHT_BLUE);
-    const short footerLeft = (SCREEN_WIDTH / 2) - (strlen(FOOTER) * 9 / 2);
     UG_PutString(footerLeft, SCREEN_HEIGHT - 4 - 8, FOOTER);
 }
-
 
 static void ui_draw_indicators(int page, int totalPages)
 {
@@ -1060,42 +995,34 @@ static void ui_draw_indicators(int page, int totalPages)
     UG_PutString(SCREEN_WIDTH - (9 * strlen(tempstring)) - 4, 4, tempstring);
 }
 
-
 static void ui_draw_row(int line, char *line1, char* line2, uint16_t color, uint16_t *tile, bool selected)
 {
-    const int innerHeight = SCREEN_HEIGHT - (16 * 2);
-    const int itemHeight = innerHeight / ITEM_COUNT;
-
-    const int rightWidth = SCREEN_WIDTH * (2.0 / 3.0);
-    const int leftWidth = SCREEN_WIDTH - rightWidth;
-
-    // Tile width = 86, height = 48 (16:9)
-    const short imageLeft = (leftWidth / 2) - (86 / 2);
-    const short textLeft = SCREEN_WIDTH - rightWidth;
-
-    short top = 16 + (line * itemHeight) - 1;
+    int itemHeight = (SCREEN_HEIGHT - (16 * 2)) / ITEM_COUNT;
+    int rightWidth = SCREEN_WIDTH * (2.0 / 3.0);
+    int leftWidth = SCREEN_WIDTH - rightWidth;
+    int imageLeft = (leftWidth / 2) - (86 / 2);
+    int textLeft = SCREEN_WIDTH - rightWidth;
+    int top = 16 + (line * itemHeight) - 1;
 
     UG_FontSelect(&FONT_8X12);
-
     UG_SetBackcolor(selected ? C_YELLOW : C_WHITE);
-    UG_FillFrame(0, top + 2, 319, top + itemHeight - 1 - 1, UG_GetBackcolor());
-
-    ui_draw_image(imageLeft, top + 2, FIRMWARE_TILE_WIDTH, FIRMWARE_TILE_HEIGHT, tile);
-
+    UG_FillFrame(0, top + 2, SCREEN_WIDTH-1, top + itemHeight - 1 - 1, UG_GetBackcolor());
     UG_SetForecolor(C_BLACK);
     UG_PutString(textLeft, top + 2 + 2 + 7, line1);
-
     UG_SetForecolor(color);
     UG_PutString(textLeft, top + 2 + 2 + 23, line2);
+
+    // Draw Tile at the end
+    for (int i = 0 ; i < FIRMWARE_TILE_HEIGHT; ++i)
+        for (int j = 0; j < FIRMWARE_TILE_WIDTH; ++j)
+            UG_DrawPixel(imageLeft + j, top + 2 + i, tile[i * FIRMWARE_TILE_WIDTH + j]);
 }
 
-
-static void ui_draw_page(char** files, int fileCount, int currentItem)
+static void ui_draw_page(char **files, int fileCount, int currentItem)
 {
     int page = (currentItem / ITEM_COUNT) * ITEM_COUNT;
-
-    odroid_flash_block_t *blocks;
     size_t count, totalFreeSpace;
+    odroid_flash_block_t *blocks;
 
     find_free_blocks(&blocks, &count, &totalFreeSpace);
     free(blocks);
@@ -1111,35 +1038,27 @@ static void ui_draw_page(char** files, int fileCount, int currentItem)
         return;
 	}
 
-    char line1[64], line2[64];
-    uint16_t color = C_GRAY;
-
     for (int line = 0; line < ITEM_COUNT && (page + line) < fileCount; ++line)
     {
-        char* fileName = files[page + line];
-        if (!fileName) abort();
+        char *fileName = files[page + line];
+        bool selected = (page + line) == currentItem;
 
         sprintf(tempstring, "%s/%s", FIRMWARE_PATH, fileName);
 
-        strcpy(line1, fileName);
-        line1[strlen(fileName) - 3] = 0; // ".fw" = 3
-
-        if (firmware_get_info(tempstring, fwInfoBuffer)) {
-            color = C_GRAY;
-            sprintf(line2, "%.2f MB", (float)fwInfoBuffer->flashSize / 1024 / 1024);
+        odroid_fw_t *fw = firmware_get_info(tempstring);
+        if (fw) {
+            sprintf(tempstring, "%.2f MB", (float)fw->flashSize / 1024 / 1024);
+            ui_draw_row(line, fileName, tempstring, C_GRAY, fw->fileHeader.tile, selected);
         } else {
-            color = C_RED;
-            sprintf(line2, "Invalid firmware");
+            ui_draw_row(line, fileName, "Invalid firmware", C_RED, fw->fileHeader.tile, selected);
         }
-
-        ui_draw_row(line, line1, line2, color,
-                        fwInfoBuffer->fileHeader.tile, (page + line) == currentItem);
+        free(fw);
     }
 
     UpdateDisplay();
 }
 
-char* ui_choose_file(const char* path)
+static char *ui_choose_file(const char *path)
 {
     ESP_LOGD(__func__, "HEAP=%#010x", esp_get_free_heap_size());
 
@@ -1213,8 +1132,6 @@ char* ui_choose_file(const char* path)
     return result;
 }
 
-
-
 static void ui_draw_dialog(dialog_option_t *options, int optionCount, int currentItem)
 {
     int border = 3;
@@ -1257,11 +1174,8 @@ static void ui_draw_dialog(dialog_option_t *options, int optionCount, int curren
     UpdateDisplay();
 }
 
-
 static int ui_choose_dialog(dialog_option_t *options, int optionCount, bool cancellable)
 {
-    ESP_LOGD(__func__, "HEAP=%#010x", esp_get_free_heap_size());
-
     int currentItem = 0;
 
     while (true)
@@ -1292,7 +1206,6 @@ static int ui_choose_dialog(dialog_option_t *options, int optionCount, bool canc
 
     return -1;
 }
-
 
 static void ui_draw_app_page(int currentItem)
 {
@@ -1331,9 +1244,6 @@ static void start_normal(void)
         nvs_open("settings", NVS_READWRITE, &nvs_h);
     }
     nvs_get_i32(nvs_h, "display_order", &displayOrder);
-
-    fwInfoBuffer = safe_alloc(sizeof(odroid_fw_t));
-    dataBuffer = safe_alloc(FLASH_BLOCK_SIZE);
 
     read_app_table();
     sort_app_table(displayOrder);
@@ -1376,7 +1286,7 @@ static void start_normal(void)
             else if (btn == ODROID_INPUT_SELECT)
             {
                 do {
-                    if ((++displayOrder) > APP_SORT_MAX)
+                    if ((++displayOrder) > LIST_SORT_MAX)
                         displayOrder = (displayOrder & 1);
 
                     sort_app_table(displayOrder);
@@ -1513,6 +1423,8 @@ static void start_install(void)
         indicate_error();
     }
 
+    SET_STATUS_LED(1);
+
     size_t size = ALIGN_ADDRESS(payload->size, FLASH_BLOCK_SIZE);
     void *data = safe_alloc(size);
 
@@ -1547,20 +1459,17 @@ void app_main(void)
 {
     printf("\n\n############### odroid-go-multi-firmware (Ver: "PROJECT_VER") ###############\n\n");
 
-    // Init gamepad
-    input_init();
-
-    // turn LED on
     gpio_set_direction(GPIO_NUM_2, GPIO_MODE_OUTPUT);
-    gpio_set_level(GPIO_NUM_2, 1);
+    SET_STATUS_LED(1);
 
     // Has to be before LCD
     sdcardret = odroid_sdcard_open();
-
     ili9341_init();
-    ili9341_clear(0xffff);
+    input_init();
 
     UG_Init(&gui, pset, SCREEN_WIDTH, SCREEN_HEIGHT);
+
+    SET_STATUS_LED(0);
 
     // Start the installation process if we didn't boot from the factory app partition
     if (esp_ota_get_running_partition()->subtype != ESP_PARTITION_SUBTYPE_APP_FACTORY)
