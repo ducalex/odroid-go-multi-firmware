@@ -16,24 +16,17 @@
 #define LCD_PIN_NUM_DC   GPIO_NUM_21
 #define LCD_PIN_NUM_BCKL GPIO_NUM_14
 
-#define MADCTL_MY  0x80
-#define MADCTL_MX  0x40
-#define MADCTL_MV  0x20
-#define MADCTL_ML  0x10
-#define MADCTL_MH 0x04
-#define TFT_RGB_BGR 0x08
+static spi_device_handle_t spi;
+static DMA_ATTR uint16_t dma_buffer[SCREEN_WIDTH];
 
 /*
  The ILI9341 needs a bunch of command/argument values to be initialized. They are stored in this struct.
 */
-typedef struct {
+static const struct {
     uint8_t cmd;
     uint8_t data[16];
     uint8_t databytes; //No of data in data; bit 7 = delay after set; 0xFF = end of cmds.
-} ili_init_cmd_t;
-
-// 2.4" LCD
-static const ili_init_cmd_t ili_init_cmds[] = {
+} ili_init_cmds[] = {
     // VCI=2.8V
     //************* Start Initial Sequence **********//
     {0x01, {0}, 0x80},
@@ -48,7 +41,7 @@ static const ili_init_cmd_t ili_init_cmds[] = {
     {0xC5, {0x32, 0x3C}, 2},    //VCM control
     {0xC7, {0x91}, 1},    //VCM control2
     //{0x36, {(MADCTL_MV | MADCTL_MX | TFT_RGB_BGR)}, 1},    // Memory Access Control
-    {0x36, {(MADCTL_MV | MADCTL_MY | TFT_RGB_BGR)}, 1},    // Memory Access Control
+    {0x36, {(0x20 | 0x80 | 0x08)}, 1},    // Memory Access Control
     {0x3A, {0x55}, 1},
     {0xB1, {0x00, 0x1B}, 2},  // Frame Rate Control (1B=70, 1F=61, 10=119)
     {0xB6, {0x0A, 0xA2}, 2},    // Display Function Control
@@ -65,9 +58,6 @@ static const ili_init_cmd_t ili_init_cmds[] = {
 
     {0, {0}, 0xff}
 };
-
-static spi_device_handle_t spi;
-static DMA_ATTR uint16_t dma_buffer[SCREEN_WIDTH];
 
 
 //Send a command to the ILI9341. Uses spi_device_transmit, which waits until the transfer is complete.
@@ -180,19 +170,6 @@ static void backlight_deinit(void)
 {
     ledc_fade_func_uninstall();
     ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
-}
-
-void ili9341_clear(uint16_t color)
-{
-    send_reset_drawing(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-
-    color = color << 8 | color >> 8;
-
-    for (int i = 0; i < SCREEN_WIDTH; ++i)
-        dma_buffer[i] = color;
-
-    for (int y = 0; y < SCREEN_HEIGHT; ++y)
-        send_continue_line(dma_buffer, SCREEN_WIDTH);
 }
 
 void ili9341_write_rectangle(int left, int top, int width, int height, const uint16_t *buffer)

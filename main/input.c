@@ -28,22 +28,14 @@ uint32_t input_read_raw(void)
     int joyY = adc1_get_raw(ODROID_GAMEPAD_IO_Y);
 
     if (joyX > 2048 + 1024)
-    {
         state |= (1 << ODROID_INPUT_LEFT);
-    }
     else if (joyX > 1024)
-    {
         state |= (1 << ODROID_INPUT_RIGHT);
-    }
 
     if (joyY > 2048 + 1024)
-    {
         state |= (1 << ODROID_INPUT_UP);
-    }
     else if (joyY > 1024)
-    {
         state |= (1 << ODROID_INPUT_DOWN);
-    }
 
     state |= (!gpio_get_level(ODROID_GAMEPAD_IO_SELECT)) ? (1 << ODROID_INPUT_SELECT) : 0;
     state |= (!gpio_get_level(ODROID_GAMEPAD_IO_START)) ? (1 << ODROID_INPUT_START) : 0;
@@ -58,8 +50,7 @@ uint32_t input_read_raw(void)
 int input_wait_for_button_press(int ticks)
 {
     uint32_t previousState = gamepad_state;
-
-    int timeout = xTaskGetTickCount() + ticks;
+    uint32_t timeout = xTaskGetTickCount() + ticks;
 
     while (true)
     {

@@ -18,10 +18,10 @@
 extern esp_err_t ff_diskio_get_drive(BYTE* out_pdrv);
 extern void ff_diskio_register_sdmmc(unsigned char pdrv, sdmmc_card_t* card);
 
-#define SD_PIN_NUM_MISO 19
-#define SD_PIN_NUM_MOSI 23
-#define SD_PIN_NUM_CLK  18
-#define SD_PIN_NUM_CS 22
+#define SD_PIN_NUM_MISO GPIO_NUM_19
+#define SD_PIN_NUM_MOSI GPIO_NUM_23
+#define SD_PIN_NUM_CLK  GPIO_NUM_18
+#define SD_PIN_NUM_CS   GPIO_NUM_22
 
 static bool isOpen = false;
 
@@ -98,54 +98,28 @@ int odroid_sdcard_files_get(const char* path, const char* extension, char*** fil
     int extensionLength = strlen(extension);
     if (extensionLength < 1) abort();
 
-
-    char* temp = (char*)malloc(extensionLength + 1);
-    if (!temp) abort();
-
-    memset(temp, 0, extensionLength + 1);
-
-
     struct dirent *entry;
-    while((entry=readdir(dir)) != NULL)
+    while ((entry = readdir(dir)))
     {
         size_t len = strlen(entry->d_name);
 
+        if (len < extensionLength)
+            continue;
 
-        // ignore 'hidden' files (MAC)
-        bool skip = false;
-        if (entry->d_name[0] == '.') skip = true;
+        if (entry->d_name[0] == '.')
+            continue;
 
+        if (strcasecmp(extension, &entry->d_name[len - extensionLength]) != 0)
+            continue;
 
-        memset(temp, 0, extensionLength + 1);
-        if (!skip)
-        {
-            for (int i = 0; i < extensionLength; ++i)
-            {
-                temp[i] = tolower((int)entry->d_name[len - extensionLength + i]);
-            }
+        if (!(result[count++] = strdup(entry->d_name)))
+            abort();
 
-            if (len > extensionLength)
-            {
-                if (strcmp(temp, extension) == 0)
-                {
-                    result[count] = (char*)malloc(len + 1);
-
-                    if (!result[count])
-                    {
-                        abort();
-                    }
-
-                    strcpy(result[count], entry->d_name);
-                    ++count;
-
-                    if (count >= MAX_FILES) break;
-                }
-            }
-        }
+        if (count >= MAX_FILES)
+            break;
     }
 
     closedir(dir);
-    free(temp);
 
     sort_files(result, count);
 
@@ -180,28 +154,18 @@ esp_err_t odroid_sdcard_open(void)
         host.max_freq_khz = SDMMC_FREQ_DEFAULT;
 
     	sdspi_slot_config_t slot_config = SDSPI_SLOT_CONFIG_DEFAULT();
-    	slot_config.gpio_miso = (gpio_num_t)SD_PIN_NUM_MISO;
-    	slot_config.gpio_mosi = (gpio_num_t)SD_PIN_NUM_MOSI;
-    	slot_config.gpio_sck  = (gpio_num_t)SD_PIN_NUM_CLK;
-    	slot_config.gpio_cs = (gpio_num_t)SD_PIN_NUM_CS;
+    	slot_config.gpio_miso = SD_PIN_NUM_MISO;
+    	slot_config.gpio_mosi = SD_PIN_NUM_MOSI;
+    	slot_config.gpio_sck  = SD_PIN_NUM_CLK;
+    	slot_config.gpio_cs = SD_PIN_NUM_CS;
     	//slot_config.dma_channel = 2;
 
-    	// Options for mounting the filesystem.
-    	// If format_if_mount_failed is set to true, SD card will be partitioned and
-    	// formatted in case when mounting fails.
-    	esp_vfs_fat_sdmmc_mount_config_t mount_config;
-        memset(&mount_config, 0, sizeof(mount_config));
+    	esp_vfs_fat_sdmmc_mount_config_t mount_config = {
+            .format_if_mount_failed = false,
+            .max_files = 5,
+        };
 
-    	mount_config.format_if_mount_failed = false;
-    	mount_config.max_files = 5;
-
-
-    	// Use settings defined above to initialize SD card and mount FAT filesystem.
-    	// Note: esp_vfs_fat_sdmmc_mount is an all-in-one convenience function.
-    	// Please check its source code and implement error recovery when developing
-    	// production applications.
-    	sdmmc_card_t* card;
-    	ret = esp_vfs_fat_sdmmc_mount(SDCARD_BASE_PATH, &host, &slot_config, &mount_config, &card);
+    	ret = esp_vfs_fat_sdmmc_mount(SDCARD_BASE_PATH, &host, &slot_config, &mount_config, NULL);
 
     	if (ret == ESP_OK || ret == ESP_ERR_INVALID_STATE)
         {
