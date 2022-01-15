@@ -16,8 +16,7 @@
 #define ODROID_GAMEPAD_IO_MENU GPIO_NUM_13
 #define ODROID_GAMEPAD_IO_VOLUME GPIO_NUM_0
 
-static volatile bool input_task_is_running = false;
-static volatile uint32_t gamepad_state = 0;
+static uint32_t gamepad_state = 0;
 
 
 uint32_t input_read_raw(void)
@@ -78,15 +77,13 @@ static void input_task(void *arg)
 {
     uint8_t debounce[ODROID_INPUT_MAX];
 
-    input_task_is_running = true;
-
     // Initialize state
     for (int i = 0; i < ODROID_INPUT_MAX; ++i)
     {
         debounce[i] = 0xff;
     }
 
-    while (input_task_is_running)
+    while (1)
     {
         // Read hardware
         uint32_t state = input_read_raw();

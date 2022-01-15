@@ -50,8 +50,6 @@
 #define LIST_SORT_DIR_ASC           0b0000
 #define LIST_SORT_DIR_DESC          0b0001
 
-#define FIRMWARE_HEADER_SIZE        (24)
-#define FIRMWARE_DESCRIPTION_SIZE   (40)
 #define FIRMWARE_PARTS_MAX          (20)
 #define FIRMWARE_TILE_WIDTH         (86)
 #define FIRMWARE_TILE_HEIGHT        (48)
@@ -65,6 +63,8 @@
 
 #define ALIGN_ADDRESS(val, alignment) (((val & (alignment-1)) != 0) ? (val & ~(alignment-1)) + alignment : val)
 #define SET_STATUS_LED(on) gpio_set_level(GPIO_NUM_2, on);
+#define RG_MIN(a, b) ({__typeof__(a) _a = (a); __typeof__(b) _b = (b);_a < _b ? _a : _b; })
+#define RG_MAX(a, b) ({__typeof__(a) _a = (a); __typeof__(b) _b = (b);_a > _b ? _a : _b; })
 
 const char *HEADER_V00_01 = "ODROIDGO_FIRMWARE_V00_01";
 
@@ -86,8 +86,8 @@ typedef struct
     uint16_t flags;
     uint32_t startOffset;
     uint32_t endOffset;
-    char     description[FIRMWARE_DESCRIPTION_SIZE];
-    char     filename[FIRMWARE_DESCRIPTION_SIZE];
+    char     description[40];
+    char     filename[40];
     uint16_t tile[FIRMWARE_TILE_WIDTH * FIRMWARE_TILE_HEIGHT];
     odroid_partition_t parts[FIRMWARE_PARTS_MAX];
     uint8_t parts_count;
@@ -98,8 +98,8 @@ typedef struct
 typedef struct
 {
     struct {
-        char version[FIRMWARE_HEADER_SIZE];
-        char description[FIRMWARE_DESCRIPTION_SIZE];
+        char version[24];
+        char description[40];
         uint16_t tile[FIRMWARE_TILE_WIDTH * FIRMWARE_TILE_HEIGHT];
     } header;
     odroid_partition_t parts[FIRMWARE_PARTS_MAX];
@@ -128,7 +128,6 @@ static int apps_count = -1;
 static int apps_max = 4;
 static int apps_seq = 0;
 static int firstAppOffset = 0x100000; // We scan the table to find the real value but this is a reasonable default
-static char tempstring[512];
 static uint16_t fb[SCREEN_WIDTH * SCREEN_HEIGHT];
 static UG_GUI gui;
 static esp_err_t sdcardret;
@@ -143,27 +142,35 @@ static void pset(UG_S16 x, UG_S16 y, UG_COLOR color)
 
 static void UpdateDisplay(void)
 {
-    ili9341_write_rectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, fb);
+    ili9341_writeLE(fb);
 }
 
-static void DisplayPage(char *TITLE, char *FOOTER)
+static void DisplayCenter(int top, const char *str)
 {
-    int titleLeft = (SCREEN_WIDTH / 2) - (strlen(TITLE) * 9 / 2);
-    int footerLeft = (SCREEN_WIDTH / 2) - (strlen(FOOTER) * 9 / 2);
+    const int maxlen = SCREEN_WIDTH / (gui.font.char_width + 1);
+    int left = RG_MAX(0, (SCREEN_WIDTH - strlen(str) * (gui.font.char_width + 1)) / 2);
+    int height = gui.font.char_height + 4 + 4;
+    char tempstring[128] = {0};
 
-    UG_FillFrame(0, 0, SCREEN_WIDTH-1, 15, C_MIDNIGHT_BLUE);
-    UG_FillFrame(0, 16, SCREEN_WIDTH-1, SCREEN_HEIGHT - 16 * 2 - 1, C_WHITE);
-    UG_FillFrame(0, SCREEN_HEIGHT - 17, SCREEN_WIDTH-1, SCREEN_HEIGHT-1, C_MIDNIGHT_BLUE);
+    UG_FillFrame(0, top, SCREEN_WIDTH-1, top + height - 1, UG_GetBackcolor());
+    UG_PutString(left, top + 4 , strncpy(tempstring, str, maxlen));
+}
+
+static void DisplayPage(const char *title, const char *footer)
+{
+    UG_FillFrame(0, 0, SCREEN_WIDTH-1, SCREEN_HEIGHT-1, C_WHITE);
     UG_FontSelect(&FONT_8X8);
     UG_SetBackcolor(C_MIDNIGHT_BLUE);
     UG_SetForecolor(C_WHITE);
-    UG_PutString(titleLeft, 4, TITLE);
+    DisplayCenter(0, title);
     UG_SetForecolor(C_LIGHT_GRAY);
-    UG_PutString(footerLeft, SCREEN_HEIGHT - 4 - 8, FOOTER);
+    DisplayCenter(SCREEN_HEIGHT - 16, footer);
 }
 
 static void DisplayIndicators(int page, int totalPages)
 {
+    char tempstring[128];
+
     UG_FontSelect(&FONT_8X8);
     UG_SetForecolor(0x8C51);
 
@@ -173,44 +180,34 @@ static void DisplayIndicators(int page, int totalPages)
 
     // Battery indicator
     int percent = (read_battery() - BATTERY_VMIN) / (BATTERY_VMAX - BATTERY_VMIN) * 100.f;
-    percent = percent > 100 ? 100 : ((percent < 0) ? 0 : percent);
-    sprintf(tempstring, "%d%%", percent);
+    sprintf(tempstring, "%d%%", RG_MIN(100, RG_MAX(0, percent)));
     UG_PutString(SCREEN_WIDTH - (9 * strlen(tempstring)) - 4, 4, tempstring);
 }
 
 static void DisplayError(const char *message)
 {
-    int left = (SCREEN_WIDTH / 2) - (strlen(message) * 9 / 2);
-    int top = (SCREEN_HEIGHT / 2) - (12 / 2);
     UG_FontSelect(&FONT_8X12);
     UG_SetForecolor(C_RED);
     UG_SetBackcolor(C_WHITE);
-    UG_FillFrame(0, top, SCREEN_WIDTH-1, top + 12, C_WHITE);
-    UG_PutString(left, top, message);
+    DisplayCenter((SCREEN_HEIGHT / 2) - (12 / 2), message);
     UpdateDisplay();
 }
 
 static void DisplayMessage(const char *message)
 {
-    int left = (SCREEN_WIDTH / 2) - (strlen(message) * 9 / 2);
-    int top = (SCREEN_HEIGHT / 2) + 8 + (12 / 2) + 16;
     UG_FontSelect(&FONT_8X12);
     UG_SetForecolor(C_BLACK);
     UG_SetBackcolor(C_WHITE);
-    UG_FillFrame(0, top, SCREEN_WIDTH-1, top + 12, C_WHITE);
-    UG_PutString(left, top, message);
+    DisplayCenter((SCREEN_HEIGHT / 2) + 8 + (12 / 2) + 16, message);
     UpdateDisplay();
 }
 
 static void DisplayNotification(const char* message)
 {
-    int left = (SCREEN_WIDTH / 2) - (strlen(message) * 9 / 2);
-    int top = SCREEN_HEIGHT - 17;
     UG_FontSelect(&FONT_8X12);
     UG_SetForecolor(C_WHITE);
     UG_SetBackcolor(C_BLUE);
-    UG_FillFrame(0, top, SCREEN_WIDTH-1, top + 16, C_BLUE);
-    UG_PutString(left, top + 3, message);
+    DisplayCenter(SCREEN_HEIGHT - 16, message);
     UpdateDisplay();
 }
 
@@ -249,7 +246,7 @@ static void DisplayHeader(const char *message)
     UG_PutString(left, top, message);
 }
 
-static void DisplayRow(int line, char *line1, char* line2, uint16_t color, uint16_t *tile, bool selected)
+static void DisplayRow(int line, const char *line1, const char *line2, uint16_t color, const uint16_t *tile, bool selected)
 {
     int itemHeight = (SCREEN_HEIGHT - (16 * 2)) / ITEM_COUNT;
     int rightWidth = SCREEN_WIDTH * (2.0 / 3.0);
@@ -266,10 +263,12 @@ static void DisplayRow(int line, char *line1, char* line2, uint16_t color, uint1
     UG_SetForecolor(color);
     UG_PutString(textLeft, top + 2 + 2 + 23, line2);
 
-    // Draw Tile at the end
-    for (int i = 0 ; i < FIRMWARE_TILE_HEIGHT; ++i)
-        for (int j = 0; j < FIRMWARE_TILE_WIDTH; ++j)
-            UG_DrawPixel(imageLeft + j, top + 2 + i, tile[i * FIRMWARE_TILE_WIDTH + j]);
+    if (tile) // Draw Tile at the end
+    {
+        for (int i = 0 ; i < FIRMWARE_TILE_HEIGHT; ++i)
+            for (int j = 0; j < FIRMWARE_TILE_WIDTH; ++j)
+                UG_DrawPixel(imageLeft + j, top + 2 + i, tile[i * FIRMWARE_TILE_WIDTH + j]);
+    }
 }
 
 //---------------
@@ -315,7 +314,7 @@ static void *safe_alloc(size_t size)
 static void cleanup_and_restart(void)
 {
     gpio_set_direction(GPIO_NUM_2, GPIO_MODE_INPUT);
-    ili9341_write_rectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, memset(fb, 0, sizeof(fb)));
+    ili9341_writeLE(memset(fb, 0, sizeof(fb)));
     ili9341_deinit();
     odroid_sdcard_close();
     nvs_close(nvs_h);
@@ -555,6 +554,7 @@ static void defrag_flash(void)
     size_t nextStartOffset = firstAppOffset;
     size_t totalBytesToMove = 0;
     size_t totalBytesMoved = 0;
+    char tempstring[128];
 
     sort_app_table(LIST_SORT_OFFSET);
 
@@ -704,7 +704,7 @@ static odroid_fw_t *firmware_get_info(const char *filename)
         goto firmware_get_info_err;
     }
 
-    outData->header.description[FIRMWARE_DESCRIPTION_SIZE - 1] = 0;
+    outData->header.description[sizeof(outData->header.description) - 1] = 0;
     outData->parts_count = 0;
     outData->flashSize = 0;
     outData->dataOffset = ftell(file);
@@ -773,6 +773,7 @@ static void flash_firmware(const char *fullPath)
     odroid_app_t *app = memset(&apps[apps_count], 0x00, sizeof(*app));
     odroid_fw_t *fw = firmware_get_info(fullPath);
     void *dataBuffer = safe_alloc(FLASH_BLOCK_SIZE);
+    char tempstring[128];
 
     ESP_LOGI(__func__, "Flashing file: %s", fullPath);
 
@@ -799,8 +800,8 @@ static void flash_firmware(const char *fullPath)
         return;
     }
 
-    strncpy(app->description, fw->header.description, FIRMWARE_DESCRIPTION_SIZE-1);
-    strncpy(app->filename, strrchr(fullPath, '/'), FIRMWARE_DESCRIPTION_SIZE-1);
+    strncpy(app->description, fw->header.description, sizeof(app->description)-1);
+    strncpy(app->filename, strrchr(fullPath, '/'), sizeof(app->filename)-1);
     memcpy(app->tile, fw->header.tile, sizeof(app->tile));
     memcpy(app->parts, fw->parts, sizeof(app->parts));
     app->parts_count = fw->parts_count;
@@ -813,7 +814,6 @@ static void flash_firmware(const char *fullPath)
     DisplayHeader(app->description);
     DisplayMessage("[START]");
     DisplayFooter("[B] Cancel");
-    UpdateDisplay();
 
     int tileLeft = (SCREEN_WIDTH / 2) - (FIRMWARE_TILE_WIDTH / 2);
     int tileTop = (16 + 16 + 16);
@@ -823,6 +823,7 @@ static void flash_firmware(const char *fullPath)
             UG_DrawPixel(tileLeft + j, tileTop + i, app->tile[i * FIRMWARE_TILE_WIDTH + j]);
 
     UG_DrawFrame(tileLeft - 1, tileTop - 1, tileLeft + FIRMWARE_TILE_WIDTH, tileTop + FIRMWARE_TILE_HEIGHT, C_BLACK);
+    UpdateDisplay();
 
     while (1)
     {
@@ -965,12 +966,13 @@ static void flash_firmware(const char *fullPath)
     write_app_table();
 
     DisplayMessage("Ready !");
-    DisplayFooter("[B] Go Back   |   [A] Boot");
+    DisplayFooter("[B] Go Back  |  [A] Boot");
     UpdateDisplay();
 
     while (1)
     {
         int btn = input_wait_for_button_press(-1);
+        if (btn == ODROID_INPUT_START) break;
         if (btn == ODROID_INPUT_A) break;
         if (btn == ODROID_INPUT_B) return;
     }
@@ -981,7 +983,7 @@ static void flash_firmware(const char *fullPath)
 
 static char *ui_choose_file(const char *path)
 {
-    ESP_LOGD(__func__, "HEAP=%#010x", esp_get_free_heap_size());
+    char tempstring[128];
 
     // Check SD card
     if (sdcardret != ESP_OK)
@@ -1025,7 +1027,7 @@ static char *ui_choose_file(const char *path)
                 sprintf(tempstring, "%.2f MB", (float)fw->flashSize / 1024 / 1024);
                 DisplayRow(line, fileName, tempstring, C_GRAY, fw->header.tile, selected);
             } else {
-                DisplayRow(line, fileName, "Invalid firmware", C_RED, fw->header.tile, selected);
+                DisplayRow(line, fileName, "Invalid firmware", C_RED, NULL, selected);
             }
             free(fw);
         }
@@ -1156,15 +1158,15 @@ static void ui_draw_app_page(int currentItem)
 {
     int page = (currentItem / ITEM_COUNT) * ITEM_COUNT;
 
-    DisplayPage("ODROID-GO", "[MENU] Menu   |   [A] Boot App");
+    DisplayPage("ODROID-GO", "[MENU] Menu  |  [A] Boot App");
     DisplayIndicators(page / ITEM_COUNT + 1, (int)ceil((double)apps_count / ITEM_COUNT));
 
     for (int line = 0; line < ITEM_COUNT && (page + line) < apps_count; ++line)
     {
         odroid_app_t *app = &apps[page + line];
-
+        char tempstring[128];
         sprintf(tempstring, "0x%x - 0x%x", app->startOffset, app->endOffset);
-        DisplayRow(line, app->description, (char*)tempstring, C_GRAY, app->tile, (page + line) == currentItem);
+        DisplayRow(line, app->description, tempstring, C_GRAY, app->tile, (page + line) == currentItem);
     }
 
 	if (apps_count == 0)
@@ -1176,6 +1178,7 @@ static void ui_draw_app_page(int currentItem)
 
 static void start_normal(void)
 {
+    char tempstring[128];
     int displayOrder = 0;
     int currentItem = 0;
     int queuedBtn = -1;
@@ -1248,7 +1251,7 @@ static void start_normal(void)
             }
         }
 
-        if (btn == ODROID_INPUT_MENU)
+        if (btn == ODROID_INPUT_MENU || btn == ODROID_INPUT_START)
         {
             dialog_option_t options[] = {
                 {0, "Install from SD Card", true},
@@ -1331,7 +1334,7 @@ static void start_normal(void)
         }
         else if (btn == ODROID_INPUT_B)
         {
-            DisplayNotification("Press B again to boot last app.");
+            DisplayNotification("Press B again to reboot.");
             queuedBtn = input_wait_for_button_press(100);
             if (queuedBtn == ODROID_INPUT_B) {
                 boot_application(NULL);
@@ -1347,6 +1350,7 @@ static void start_install(void)
 
     for (int i = 5; i > 0; --i)
     {
+        char tempstring[128];
         sprintf(tempstring, "Installing in %d seconds...", i);
         DisplayMessage(tempstring);
         vTaskDelay(pdMS_TO_TICKS(1000));
