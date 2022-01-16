@@ -54,8 +54,6 @@
 #define FIRMWARE_TILE_WIDTH         (86)
 #define FIRMWARE_TILE_HEIGHT        (48)
 
-#define FIRMWARE_PATH               SDCARD_BASE_PATH "/odroid/firmware"
-
 #define BATTERY_VMAX                (4.20f)
 #define BATTERY_VMIN                (3.30f)
 
@@ -66,7 +64,15 @@
 #define RG_MIN(a, b) ({__typeof__(a) _a = (a); __typeof__(b) _b = (b);_a < _b ? _a : _b; })
 #define RG_MAX(a, b) ({__typeof__(a) _a = (a); __typeof__(b) _b = (b);_a > _b ? _a : _b; })
 
-const char *HEADER_V00_01 = "ODROIDGO_FIRMWARE_V00_01";
+#ifdef TARGET_MRGC_G32
+#define HEADER_LENGTH 22
+#define HEADER_V00_01 "ESPLAY_FIRMWARE_V00_01"
+#define FIRMWARE_PATH SDCARD_BASE_PATH "/espgbc/firmware"
+#else
+#define HEADER_LENGTH 24
+#define HEADER_V00_01 "ODROIDGO_FIRMWARE_V00_01"
+#define FIRMWARE_PATH SDCARD_BASE_PATH "/odroid/firmware"
+#endif
 
 typedef struct
 {
@@ -93,12 +99,13 @@ typedef struct
     uint8_t parts_count;
     uint8_t _reserved0;
     uint16_t installSeq;
-} odroid_app_t; // __attribute__((packed))
+} odroid_app_t;
 
 typedef struct
 {
-    struct {
-        char version[24];
+    struct __attribute__((packed))
+    {
+        char version[HEADER_LENGTH];
         char description[40];
         uint16_t tile[FIRMWARE_TILE_WIDTH * FIRMWARE_TILE_HEIGHT];
     } header;
@@ -202,9 +209,9 @@ static void DisplayMessage(const char *message)
     UpdateDisplay();
 }
 
-static void DisplayNotification(const char* message)
+static void DisplayNotification(const char *message)
 {
-    UG_FontSelect(&FONT_8X12);
+    UG_FontSelect(&FONT_8X8);
     UG_SetForecolor(C_WHITE);
     UG_SetBackcolor(C_BLUE);
     DisplayCenter(SCREEN_HEIGHT - 16, message);
@@ -248,12 +255,10 @@ static void DisplayHeader(const char *message)
 
 static void DisplayRow(int line, const char *line1, const char *line2, uint16_t color, const uint16_t *tile, bool selected)
 {
-    int itemHeight = (SCREEN_HEIGHT - (16 * 2)) / ITEM_COUNT;
-    int rightWidth = SCREEN_WIDTH * (2.0 / 3.0);
-    int leftWidth = SCREEN_WIDTH - rightWidth;
-    int imageLeft = (leftWidth / 2) - (86 / 2);
-    int textLeft = SCREEN_WIDTH - rightWidth;
-    int top = 16 + (line * itemHeight) - 1;
+    const int margin = SCREEN_WIDTH > 240 ? 6 : 2;
+    const int itemHeight = 52;
+    const int textLeft = margin + FIRMWARE_TILE_WIDTH + margin;
+    const int top = 16 + (line * itemHeight) - 1;
 
     UG_FontSelect(&FONT_8X12);
     UG_SetBackcolor(selected ? C_YELLOW : C_WHITE);
@@ -267,7 +272,7 @@ static void DisplayRow(int line, const char *line1, const char *line2, uint16_t 
     {
         for (int i = 0 ; i < FIRMWARE_TILE_HEIGHT; ++i)
             for (int j = 0; j < FIRMWARE_TILE_WIDTH; ++j)
-                UG_DrawPixel(imageLeft + j, top + 2 + i, tile[i * FIRMWARE_TILE_WIDTH + j]);
+                UG_DrawPixel(margin + j, top + 2 + i, tile[i * FIRMWARE_TILE_WIDTH + j]);
     }
 }
 
@@ -314,11 +319,11 @@ static void *safe_alloc(size_t size)
 static void cleanup_and_restart(void)
 {
     gpio_set_direction(GPIO_NUM_2, GPIO_MODE_INPUT);
-    ili9341_writeLE(memset(fb, 0, sizeof(fb)));
-    ili9341_deinit();
     odroid_sdcard_close();
     nvs_close(nvs_h);
     nvs_flash_deinit_partition(MFW_NVS_PARTITION);
+    ili9341_writeLE(memset(fb, 0, sizeof(fb)));
+    ili9341_deinit();
     esp_restart();
 }
 
@@ -699,7 +704,7 @@ static odroid_fw_t *firmware_get_info(const char *filename)
         goto firmware_get_info_err;
     }
 
-    if (memcmp(HEADER_V00_01, outData->header.version, strlen(HEADER_V00_01)) != 0)
+    if (memcmp(HEADER_V00_01, outData->header.version, HEADER_LENGTH) != 0)
     {
         goto firmware_get_info_err;
     }
@@ -1157,14 +1162,14 @@ static int ui_choose_dialog(dialog_option_t *options, int optionCount, bool canc
 static void ui_draw_app_page(int currentItem)
 {
     int page = (currentItem / ITEM_COUNT) * ITEM_COUNT;
+    char tempstring[128];
 
-    DisplayPage("ODROID-GO", "[MENU] Menu  |  [A] Boot App");
+    DisplayPage("MULTI-FIRMWARE", "[MENU] Menu  |  [A] Boot App");
     DisplayIndicators(page / ITEM_COUNT + 1, (int)ceil((double)apps_count / ITEM_COUNT));
 
     for (int line = 0; line < ITEM_COUNT && (page + line) < apps_count; ++line)
     {
         odroid_app_t *app = &apps[page + line];
-        char tempstring[128];
         sprintf(tempstring, "0x%x - 0x%x", app->startOffset, app->endOffset);
         DisplayRow(line, app->description, tempstring, C_GRAY, app->tile, (page + line) == currentItem);
     }
@@ -1225,7 +1230,7 @@ static void start_normal(void)
 	        }
 	        else if (btn == ODROID_INPUT_A)
 	        {
-                DisplayPage("ODROID-GO", PROJECT_VER);
+                DisplayPage("MULTI-FIRMWARE", PROJECT_VER);
                 boot_application(apps + currentItem);
 	        }
             else if (btn == ODROID_INPUT_SELECT)
