@@ -1,7 +1,6 @@
 #pragma once
-
 #include "esp_err.h"
-
+#include "target.h"
 #define SDCARD_BASE_PATH "/sd"
 
 esp_err_t odroid_sdcard_open(void);

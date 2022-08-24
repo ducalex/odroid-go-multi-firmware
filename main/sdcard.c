@@ -18,12 +18,22 @@
 extern esp_err_t ff_diskio_get_drive(BYTE* out_pdrv);
 extern void ff_diskio_register_sdmmc(unsigned char pdrv, sdmmc_card_t* card);
 
-#ifdef TARGET_MRGC_G32
+#ifdef CONFIG_TARGET_MRGC_G32
 #define DECLARE_SDCARD_CONFIG() \
         sdmmc_host_t host_config = SDMMC_HOST_DEFAULT(); \
         host_config.flags = SDMMC_HOST_FLAG_1BIT; \
         host_config.max_freq_khz = SDMMC_FREQ_HIGHSPEED; \
         sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT(); \
+        slot_config.width = 1;
+#elif CONFIG_TARGET_ESPLAY_S3
+#define DECLARE_SDCARD_CONFIG() \
+		sdmmc_host_t host_config = SDMMC_HOST_DEFAULT(); \
+        host_config.flags = SDMMC_HOST_FLAG_1BIT;  \
+        host_config.max_freq_khz = SDMMC_FREQ_DEFAULT; \
+        sdmmc_slot_config_t slot_config = { \
+		.width = 1, .flags = 0, \
+		.d0 = RG_GPIO_SDSPI_D0, .d1 = -1, .d2 = -1, .d3 = -1, .d4 = -1, .d5 = -1, .d6 = -1, .d7 = -1, \
+		.clk = RG_GPIO_SDSPI_CLK, .cmd = RG_GPIO_SDSPI_CMD, .cd = -1, .wp = -1,}; \
         slot_config.width = 1;
 #else
 #define DECLARE_SDCARD_CONFIG() \
@@ -153,14 +163,23 @@ void odroid_sdcard_files_free(char** files, int count)
 esp_err_t odroid_sdcard_open(void)
 {
     DECLARE_SDCARD_CONFIG();
-
+#if RG_SDSPI_HIGHSPEED == 1
+	host_config.max_freq_khz = SDMMC_FREQ_HIGHSPEED;
+#endif
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {
         .format_if_mount_failed = false,
         .max_files = 5,
+#ifdef CONFIG_CONFIG_TARGET_ESPLAY_S3
+		.allocation_unit_size = 32 * 1024
+#endif
     };
 
     esp_err_t ret = esp_vfs_fat_sdmmc_mount(SDCARD_BASE_PATH, &host_config, &slot_config, &mount_config, NULL);
-
+#ifdef CONFIG_CONFIG_TARGET_ESPLAY_S3
+	if (ret != ESP_OK){
+		ESP_LOGE(__func__, "esp_vfs_fat_sdmmc_mount failed (%d)", ret);
+	}
+#else
     if (ret == ESP_OK || ret == ESP_ERR_INVALID_STATE)
     {
         ret = ESP_OK;
@@ -169,7 +188,7 @@ esp_err_t odroid_sdcard_open(void)
     {
         ESP_LOGE(__func__, "esp_vfs_fat_sdmmc_mount failed (%d)", ret);
     }
-
+#endif
     return ret;
 }
 
@@ -214,8 +233,10 @@ esp_err_t odroid_sdcard_format(int fs_type)
         goto _cleanup;
     }
 
-#ifdef TARGET_MRGC_G32
+#ifdef CONFIG_TARGET_MRGC_G32
     err = sdmmc_host_init_slot(host_config.slot, &slot_config);
+#elif CONFIG_CONFIG_TARGET_ESPLAY_S3
+	err = sdmmc_host_init_slot(host_config.slot,&slot_config);
 #else
     err = sdspi_host_init_slot(host_config.slot, &slot_config);
 #endif

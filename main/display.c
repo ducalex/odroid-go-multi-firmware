@@ -10,7 +10,7 @@
 #include "display.h"
 
 static spi_device_handle_t spi;
-static DMA_ATTR uint16_t dma_buffer[SCREEN_WIDTH];
+static DMA_ATTR uint16_t dma_buffer[RG_SCREEN_WIDTH];
 
 static const struct {
     uint8_t cmd;
@@ -19,7 +19,7 @@ static const struct {
 } ili_init_cmds[] = {
     {0x01, {0}, 0x80},
     {0x3A, {0x55}, 1}, // Pixel Format Set RGB565
-#ifdef TARGET_MRGC_G32
+#ifdef CONFIG_TARGET_MRGC_G32
     {0x36, {(0x00|0x00|0x00)}, 1},
     {0xB1, {0x00, 0x10}, 2},                            // Frame Rate Control (1B=70, 1F=61, 10=119)
     {0xB2, {0x0c, 0x0c, 0x00, 0x33, 0x33}, 5},
@@ -33,6 +33,28 @@ static const struct {
     {0xD0, {0xA4, 0xA1}, 2},
     {0xE0, {0xD0, 0x00, 0x03, 0x09, 0x13, 0x1C, 0x3A, 0x55, 0x48, 0x18, 0x12, 0x0E, 0x19, 0x1E}, 14},
     {0xE1, {0xD0, 0x00, 0x03, 0x09, 0x05, 0x25, 0x3A, 0x55, 0x50, 0x3D, 0x1C, 0x1D, 0x1D, 0x1E}, 14},
+#elif CONFIG_CONFIG_TARGET_ESPLAY_S3
+	//-----------------------ST7789V Frame rate setting-----------------//
+	{0x3A, {0X05}, 1},  //65k mode
+	{0xC5, {0x1A}, 1},  //VCOM
+	{0x36, {0x60}, 1},      //屏幕显示方向设置
+	//-------------ST7789V Frame rate setting-----------//
+	{0xB2, {0x05, 0x05, 0x00, 0x33, 0x33}, 5},  //Porch Setting
+	{0xB7, {0x05}, 1}, //Gate Control //12.2v   -10.43v
+	//--------------ST7789V Power setting---------------//
+	{0xBB, {0x3F}, 1},  //VCOM
+	{0xC0, {0x2c}, 1},						//Power control
+	{0xC2, {0x01}, 1},						//VDV and VRH Command Enable
+	{0xC3, {0x0F}, 1},						//VRH Set 4.3+( vcom+vcom offset+vdv)
+	{0xC4, {0xBE}, 1},					//VDV Set 0v
+	{0xC6, {0X01}, 1},                    //Frame Rate Control in Normal Mode 111Hz
+	{0xD0, {0xA4,0xA1}, 2},           //Power Control 1
+	{0xE8, {0x03}, 1},                    //Power Control 1
+	{0xE9, {0x09,0x09,0x08}, 3},  //Equalize time control
+	//---------------ST7789V gamma setting-------------//
+	{0xE0, {0xD0,0x05,0x09,0x09,0x08,0x14,0x28,0x33,0x3F,0x07,0x13,0x14,0x28,0x30}, 14},//Set Gamma
+	{0XE1, {0xD0, 0x05, 0x09, 0x09, 0x08, 0x03, 0x24, 0x32, 0x32, 0x3B, 0x14, 0x13, 0x28, 0x2F, 0x1F}, 14},//Set Gamma
+	{0x20, {0}, 0},//反显
 #else
     {0xCF, {0x00, 0xc3, 0x30}, 3},
     {0xED, {0x64, 0x03, 0x12, 0x81}, 4},
@@ -82,15 +104,15 @@ static void ili_data(spi_device_handle_t spi, const void *data, int len)
 
 static void ili_spi_pre_transfer_callback(spi_transaction_t *t)
 {
-    gpio_set_level(LCD_PIN_NUM_DC, (int)t->user & 1);
+    gpio_set_level(RG_GPIO_LCD_DC, (int)t->user & 1);
 }
 
 void ili9341_writeLE(const uint16_t *buffer)
 {
     const int left = 0;
-    const int top = SCREEN_OFFSET_TOP;
-    const int width = SCREEN_WIDTH;
-    const int height = SCREEN_HEIGHT;
+    const int top = RG_SCREEN_MARGIN_TOP;
+    const int width = RG_SCREEN_WIDTH;
+    const int height = RG_SCREEN_HEIGHT;
 
     uint8_t tx_data[4];
 
@@ -124,8 +146,8 @@ void ili9341_writeLE(const uint16_t *buffer)
 void ili9341_deinit()
 {
     spi_bus_remove_device(spi);
-    gpio_reset_pin(LCD_PIN_NUM_DC);
-    gpio_reset_pin(LCD_PIN_NUM_BCKL);
+    gpio_reset_pin(RG_GPIO_LCD_DC);
+    gpio_reset_pin(RG_GPIO_LCD_BCKL);
 }
 
 void ili9341_init()
@@ -143,7 +165,7 @@ void ili9341_init()
     ledc_channel_config(&(ledc_channel_config_t){
         .channel = LEDC_CHANNEL_0,
         .duty = 0x1fff,
-        .gpio_num = LCD_PIN_NUM_BCKL,
+        .gpio_num = RG_GPIO_LCD_BCKL,
         .intr_type = LEDC_INTR_FADE_END,
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .timer_sel = LEDC_TIMER_0,
@@ -154,34 +176,48 @@ void ili9341_init()
 
 
     ESP_LOGI(__func__, "LCD: spi init...");
-
-    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[LCD_PIN_NUM_DC], PIN_FUNC_GPIO);
-    gpio_set_direction(LCD_PIN_NUM_DC, GPIO_MODE_OUTPUT);
-    gpio_set_level(LCD_PIN_NUM_DC, 1);
+#if defined(CONFIG_IDF_TARGET_ESP32)
+    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[RG_GPIO_LCD_DC], PIN_FUNC_GPIO);
+#endif
+    gpio_set_direction(RG_GPIO_LCD_DC, GPIO_MODE_OUTPUT);
+    gpio_set_level(RG_GPIO_LCD_DC, 1);
 
     // Initialize SPI
     spi_bus_config_t buscfg = {
-        .miso_io_num = LCD_PIN_NUM_MISO,
-        .mosi_io_num = LCD_PIN_NUM_MOSI,
-        .sclk_io_num = LCD_PIN_NUM_CLK,
+        .miso_io_num = RG_GPIO_LCD_MISO,
+        .mosi_io_num = RG_GPIO_LCD_MOSI,
+        .sclk_io_num = RG_GPIO_LCD_CLK,
         .quadwp_io_num = GPIO_NUM_NC,
         .quadhd_io_num = GPIO_NUM_NC,
     };
 
     spi_device_interface_config_t devcfg = {
-        .clock_speed_hz = SPI_MASTER_FREQ_40M,
+#ifdef CONFIG_TARGET_ESPLAY_S3
+        .clock_speed_hz = SPI_MASTER_FREQ_80M,
+#else
+	    .clock_speed_hz = SPI_MASTER_FREQ_40M,
+#endif
         .mode = 0,
-        .spics_io_num = LCD_PIN_NUM_CS,
+        .spics_io_num = RG_GPIO_LCD_CS,
         .queue_size = 4,
         .pre_cb = ili_spi_pre_transfer_callback,
         .flags = SPI_DEVICE_NO_DUMMY,
     };
-
-    ret = spi_bus_initialize(HSPI_HOST, &buscfg, 1);
-    //assert(ret==ESP_OK);
-
-    ret = spi_bus_add_device(HSPI_HOST, &devcfg, &spi);
+#ifdef CONFIG_TARGET_ESPLAY_S3
+    ret = spi_bus_initialize(SPI2_HOST, &buscfg, SPI_DMA_CH_AUTO);
     assert(ret==ESP_OK);
+	ret = spi_bus_add_device(SPI2_HOST, &devcfg, &spi);
+	assert(ret==ESP_OK);
+	gpio_set_direction(RG_GPIO_LCD_RST,GPIO_MODE_OUTPUT);
+	gpio_set_level(RG_GPIO_LCD_RST,0);
+	vTaskDelay(120 / portTICK_RATE_MS);
+	gpio_set_level(RG_GPIO_LCD_RST,1);
+#else
+	ret = spi_bus_initialize(HSPI_HOST, &buscfg, 1);
+    assert(ret==ESP_OK);
+	ret = spi_bus_add_device(HSPI_HOST, &devcfg, &spi);
+	assert(ret==ESP_OK);
+#endif
 
     for (int cmd = 0; cmd < sizeof(ili_init_cmds)/sizeof(ili_init_cmds[0]); cmd++)
     {
@@ -202,9 +238,9 @@ void ili9341_init()
     ili_cmd(spi, 0x2B);
     ili_data(spi, (uint8_t[]){0, 0, 0xFF, 0xFF}, 4);
     ili_cmd(spi, 0x2C);
-    memset(dma_buffer, 0, SCREEN_WIDTH * 2);
-    for (int p = 0; p < 320 * 240; p += SCREEN_WIDTH)
-        ili_data(spi, dma_buffer, SCREEN_WIDTH * 2);
+    memset(dma_buffer, 0, RG_SCREEN_WIDTH * 2);
+    for (int p = 0; p < 320 * 240; p += RG_SCREEN_WIDTH)
+        ili_data(spi, dma_buffer, RG_SCREEN_WIDTH * 2);
 
     ESP_LOGI(__func__, "LCD Initialized.");
 }

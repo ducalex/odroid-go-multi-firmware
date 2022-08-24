@@ -1,7 +1,6 @@
 #pragma once
-
 #include <stdint.h>
-
+#include <target.h>
 enum
 {
 	ODROID_INPUT_UP = 0,
