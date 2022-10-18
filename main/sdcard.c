@@ -169,13 +169,13 @@ esp_err_t odroid_sdcard_open(void)
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {
         .format_if_mount_failed = false,
         .max_files = 5,
-#ifdef CONFIG_CONFIG_TARGET_ESPLAY_S3
+#ifdef CONFIG_TARGET_ESPLAY_S3
 		.allocation_unit_size = 32 * 1024
 #endif
     };
 
     esp_err_t ret = esp_vfs_fat_sdmmc_mount(SDCARD_BASE_PATH, &host_config, &slot_config, &mount_config, NULL);
-#ifdef CONFIG_CONFIG_TARGET_ESPLAY_S3
+#ifdef CONFIG_TARGET_ESPLAY_S3
 	if (ret != ESP_OK){
 		ESP_LOGE(__func__, "esp_vfs_fat_sdmmc_mount failed (%d)", ret);
 	}
@@ -235,7 +235,7 @@ esp_err_t odroid_sdcard_format(int fs_type)
 
 #ifdef CONFIG_TARGET_MRGC_G32
     err = sdmmc_host_init_slot(host_config.slot, &slot_config);
-#elif CONFIG_CONFIG_TARGET_ESPLAY_S3
+#elif CONFIG_TARGET_ESPLAY_S3
 	err = sdmmc_host_init_slot(host_config.slot,&slot_config);
 #else
     err = sdspi_host_init_slot(host_config.slot, &slot_config);
