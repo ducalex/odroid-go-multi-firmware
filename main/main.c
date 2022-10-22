@@ -57,7 +57,7 @@
 #define BATTERY_VMAX                (4.20f)
 #define BATTERY_VMIN                (3.30f)
 
-#define ITEM_COUNT                  ((SCREEN_HEIGHT-32)/52)
+#define ITEM_COUNT                  ((RG_SCREEN_HEIGHT-32)/52)
 
 #define ALIGN_ADDRESS(val, alignment) (((val & (alignment-1)) != 0) ? (val & ~(alignment-1)) + alignment : val)
 #define SET_STATUS_LED(on) gpio_set_level(GPIO_NUM_2, on);
@@ -135,7 +135,7 @@ static int apps_count = -1;
 static int apps_max = 4;
 static int apps_seq = 0;
 static int firstAppOffset = 0x100000; // We scan the table to find the real value but this is a reasonable default
-static uint16_t fb[SCREEN_WIDTH * SCREEN_HEIGHT];
+static uint16_t fb[RG_SCREEN_WIDTH * RG_SCREEN_HEIGHT];
 static UG_GUI gui;
 static esp_err_t sdcardret;
 static nvs_handle nvs_h;
@@ -144,7 +144,7 @@ static float read_battery(void);
 
 static void pset(UG_S16 x, UG_S16 y, UG_COLOR color)
 {
-    fb[y * SCREEN_WIDTH + x] = color;
+    fb[y * RG_SCREEN_WIDTH + x] = color;
 }
 
 static void UpdateDisplay(void)
@@ -154,24 +154,24 @@ static void UpdateDisplay(void)
 
 static void DisplayCenter(int top, const char *str)
 {
-    const int maxlen = SCREEN_WIDTH / (gui.font.char_width + 1);
-    int left = RG_MAX(0, (SCREEN_WIDTH - strlen(str) * (gui.font.char_width + 1)) / 2);
+    const int maxlen = RG_SCREEN_WIDTH / (gui.font.char_width + 1);
+    int left = RG_MAX(0, (RG_SCREEN_WIDTH - strlen(str) * (gui.font.char_width + 1)) / 2);
     int height = gui.font.char_height + 4 + 4;
     char tempstring[128] = {0};
 
-    UG_FillFrame(0, top, SCREEN_WIDTH-1, top + height - 1, UG_GetBackcolor());
+    UG_FillFrame(0, top, RG_SCREEN_WIDTH-1, top + height - 1, UG_GetBackcolor());
     UG_PutString(left, top + 4 , strncpy(tempstring, str, maxlen));
 }
 
 static void DisplayPage(const char *title, const char *footer)
 {
-    UG_FillFrame(0, 0, SCREEN_WIDTH-1, SCREEN_HEIGHT-1, C_WHITE);
+    UG_FillFrame(0, 0, RG_SCREEN_WIDTH-1, RG_SCREEN_HEIGHT-1, C_WHITE);
     UG_FontSelect(&FONT_8X8);
     UG_SetBackcolor(C_MIDNIGHT_BLUE);
     UG_SetForecolor(C_WHITE);
     DisplayCenter(0, title);
     UG_SetForecolor(C_LIGHT_GRAY);
-    DisplayCenter(SCREEN_HEIGHT - 16, footer);
+    DisplayCenter(RG_SCREEN_HEIGHT - 16, footer);
 }
 
 static void DisplayIndicators(int page, int totalPages)
@@ -188,7 +188,7 @@ static void DisplayIndicators(int page, int totalPages)
     // Battery indicator
     int percent = (read_battery() - BATTERY_VMIN) / (BATTERY_VMAX - BATTERY_VMIN) * 100.f;
     sprintf(tempstring, "%d%%", RG_MIN(100, RG_MAX(0, percent)));
-    UG_PutString(SCREEN_WIDTH - (9 * strlen(tempstring)) - 4, 4, tempstring);
+    UG_PutString(RG_SCREEN_WIDTH - (9 * strlen(tempstring)) - 4, 4, tempstring);
 }
 
 static void DisplayError(const char *message)
@@ -196,7 +196,7 @@ static void DisplayError(const char *message)
     UG_FontSelect(&FONT_8X12);
     UG_SetForecolor(C_RED);
     UG_SetBackcolor(C_WHITE);
-    DisplayCenter((SCREEN_HEIGHT / 2) - (12 / 2), message);
+    DisplayCenter((RG_SCREEN_HEIGHT / 2) - (12 / 2), message);
     UpdateDisplay();
 }
 
@@ -205,7 +205,7 @@ static void DisplayMessage(const char *message)
     UG_FontSelect(&FONT_8X12);
     UG_SetForecolor(C_BLACK);
     UG_SetBackcolor(C_WHITE);
-    DisplayCenter((SCREEN_HEIGHT / 2) + 8 + (12 / 2) + 16, message);
+    DisplayCenter((RG_SCREEN_HEIGHT / 2) + 8 + (12 / 2) + 16, message);
     UpdateDisplay();
 }
 
@@ -214,7 +214,7 @@ static void DisplayNotification(const char *message)
     UG_FontSelect(&FONT_8X8);
     UG_SetForecolor(C_WHITE);
     UG_SetBackcolor(C_BLUE);
-    DisplayCenter(SCREEN_HEIGHT - 16, message);
+    DisplayCenter(RG_SCREEN_HEIGHT - 16, message);
     UpdateDisplay();
 }
 
@@ -223,8 +223,8 @@ static void DisplayProgress(int percent)
     const int WIDTH = 200;
     const int HEIGHT = 12;
     const int FILL_WIDTH = WIDTH * ((percent > 100 ? 100 : percent) / 100.0f);
-    int left = (SCREEN_WIDTH / 2) - (WIDTH / 2);
-    int top = (SCREEN_HEIGHT / 2) - (HEIGHT / 2) + 16;
+    int left = (RG_SCREEN_WIDTH / 2) - (WIDTH / 2);
+    int top = (RG_SCREEN_HEIGHT / 2) - (HEIGHT / 2) + 16;
     UG_FillFrame(left - 1, top - 1, left + WIDTH + 1, top + HEIGHT + 1, C_WHITE);
     UG_DrawFrame(left - 1, top - 1, left + WIDTH + 1, top + HEIGHT + 1, C_BLACK);
     if (FILL_WIDTH > 0)
@@ -233,36 +233,36 @@ static void DisplayProgress(int percent)
 
 static void DisplayFooter(const char *message)
 {
-    int left = (SCREEN_WIDTH / 2) - (strlen(message) * 9 / 2);
-    int top = SCREEN_HEIGHT - (16 * 2) - 8;
+    int left = (RG_SCREEN_WIDTH / 2) - (strlen(message) * 9 / 2);
+    int top = RG_SCREEN_HEIGHT - (16 * 2) - 8;
     UG_FontSelect(&FONT_8X12);
     UG_SetForecolor(C_BLACK);
     UG_SetBackcolor(C_WHITE);
-    UG_FillFrame(0, top, SCREEN_WIDTH-1, top + 12, C_WHITE);
+    UG_FillFrame(0, top, RG_SCREEN_WIDTH-1, top + 12, C_WHITE);
     UG_PutString(left, top, message);
 }
 
 static void DisplayHeader(const char *message)
 {
-    int left = (SCREEN_WIDTH / 2) - (strlen(message) * 9 / 2);
+    int left = (RG_SCREEN_WIDTH / 2) - (strlen(message) * 9 / 2);
     int top = (16 + 8);
     UG_FontSelect(&FONT_8X12);
     UG_SetForecolor(C_BLACK);
     UG_SetBackcolor(C_WHITE);
-    UG_FillFrame(0, top, SCREEN_WIDTH-1, top + 12, C_WHITE);
+    UG_FillFrame(0, top, RG_SCREEN_WIDTH-1, top + 12, C_WHITE);
     UG_PutString(left, top, message);
 }
 
 static void DisplayRow(int line, const char *line1, const char *line2, uint16_t color, const uint16_t *tile, bool selected)
 {
-    const int margin = SCREEN_WIDTH > 240 ? 6 : 2;
+    const int margin = RG_SCREEN_WIDTH > 240 ? 6 : 2;
     const int itemHeight = 52;
     const int textLeft = margin + FIRMWARE_TILE_WIDTH + margin;
     const int top = 16 + (line * itemHeight) - 1;
 
     UG_FontSelect(&FONT_8X12);
     UG_SetBackcolor(selected ? C_YELLOW : C_WHITE);
-    UG_FillFrame(0, top + 2, SCREEN_WIDTH-1, top + itemHeight - 1 - 1, UG_GetBackcolor());
+    UG_FillFrame(0, top + 2, RG_SCREEN_WIDTH-1, top + itemHeight - 1 - 1, UG_GetBackcolor());
     UG_SetForecolor(C_BLACK);
     UG_PutString(textLeft, top + 2 + 2 + 7, line1);
     UG_SetForecolor(color);
@@ -820,7 +820,7 @@ static void flash_firmware(const char *fullPath)
     DisplayMessage("[START]");
     DisplayFooter("[B] Cancel");
 
-    int tileLeft = (SCREEN_WIDTH / 2) - (FIRMWARE_TILE_WIDTH / 2);
+    int tileLeft = (RG_SCREEN_WIDTH / 2) - (FIRMWARE_TILE_WIDTH / 2);
     int tileTop = (16 + 16 + 16);
 
     for (int i = 0 ; i < FIRMWARE_TILE_HEIGHT; ++i)
@@ -1101,8 +1101,8 @@ static int ui_choose_dialog(dialog_option_t *options, int optionCount, bool canc
 
     while (true)
     {
-        int top = (SCREEN_HEIGHT - height) / 2;
-        int left  = (SCREEN_WIDTH - width) / 2;
+        int top = (RG_SCREEN_HEIGHT - height) / 2;
+        int left  = (RG_SCREEN_WIDTH - width) / 2;
 
         UG_FillFrame(left, top, left + width, top + height, C_BLUE);
         UG_FillFrame(left + border, top + border, left + width - border, top + height - border, C_WHITE);
@@ -1414,7 +1414,7 @@ void app_main(void)
     ili9341_init();
     input_init();
 
-    UG_Init(&gui, pset, SCREEN_WIDTH, SCREEN_HEIGHT);
+    UG_Init(&gui, pset, RG_SCREEN_WIDTH, RG_SCREEN_HEIGHT);
 
     SET_STATUS_LED(0);
 

@@ -8,8 +8,34 @@
 
 #include "input.h"
 
-#ifdef TARGET_MRGC_G32
+#ifdef CONFIG_TARGET_MRGC_G32
 #define TRY(x) if ((err = (x)) != ESP_OK) { goto fail; }
+
+static bool rg_i2c_read(uint8_t addr, int reg, void *read_data, size_t read_len)
+{
+    esp_err_t err = ESP_FAIL;
+
+    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+    if (reg >= 0)
+    {
+        TRY(i2c_master_start(cmd));
+        TRY(i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, true));
+        TRY(i2c_master_write_byte(cmd, (uint8_t)reg, true));
+    }
+    TRY(i2c_master_start(cmd));
+    TRY(i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_READ, true));
+    TRY(i2c_master_read(cmd, read_data, read_len, I2C_MASTER_LAST_NACK));
+    TRY(i2c_master_stop(cmd));
+    TRY(i2c_master_cmd_begin(I2C_NUM_0, cmd, pdMS_TO_TICKS(500)));
+    i2c_cmd_link_delete(cmd);
+    return true;
+
+fail:
+    ESP_LOGE(__func__, "Read from 0x%02x failed. reg=%d, err=0x%x\n", addr, reg, err);
+    return false;
+}
+#elif CONFIG_TARGET_ESPLAY_S3
+	#define TRY(x) if ((err = (x)) != ESP_OK) { goto fail; }
 
 static bool rg_i2c_read(uint8_t addr, int reg, void *read_data, size_t read_len)
 {
@@ -52,7 +78,7 @@ uint32_t input_read_raw(void)
 {
     uint32_t state = 0;
 
-#ifdef TARGET_MRGC_G32
+#ifdef CONFIG_TARGET_MRGC_G32
     uint8_t data[5];
     if (rg_i2c_read(0x20, -1, &data, 5))
     {
@@ -68,6 +94,23 @@ uint32_t input_read_raw(void)
         if (buttons & (1 << 0)) state |= (1 << ODROID_INPUT_START);
         if (buttons & (1 << 6)) state |= (1 << ODROID_INPUT_A);
         if (buttons & (1 << 7)) state |= (1 << ODROID_INPUT_B);
+    }
+#elif CONFIG_TARGET_ESPLAY_S3
+	uint8_t data[5];
+    if (rg_i2c_read(0x20, -1, &data, 5))
+    {
+        int buttons = ~((data[2] << 8) | data[1]);
+
+        if (buttons & (1 << 2)) state |= (1 << ODROID_INPUT_UP);
+        if (buttons & (1 << 3)) state |= (1 << ODROID_INPUT_DOWN);
+        if (buttons & (1 << 4)) state |= (1 << ODROID_INPUT_LEFT);
+        if (buttons & (1 << 5)) state |= (1 << ODROID_INPUT_RIGHT);
+        if (buttons & gpio_get_level(RG_GPIO_GAMEPAD_MENU)) state |= (1 << ODROID_INPUT_MENU);
+        if (buttons & (1 << 1)) state |= (1 << ODROID_INPUT_SELECT);
+        if (buttons & (1 << 0)) state |= (1 << ODROID_INPUT_START);
+        if (buttons & (1 << 6)) state |= (1 << ODROID_INPUT_A);
+        if (buttons & (1 << 7)) state |= (1 << ODROID_INPUT_B);
+//	    printf("input_read_raw: %#X\n",state);
     }
 #else
     int joyX = adc1_get_raw(ODROID_GAMEPAD_IO_X);
@@ -165,12 +208,12 @@ static void input_task(void *arg)
 
 void input_init(void)
 {
-#ifdef TARGET_MRGC_G32
+#ifdef CONFIG_TARGET_MRGC_G32
     const i2c_config_t i2c_config = {
         .mode = I2C_MODE_MASTER,
-        .sda_io_num = GPIO_NUM_21,
+        .sda_io_num = RG_GPIO_I2C_SDA,
         .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_io_num = GPIO_NUM_22,
+        .scl_io_num = RG_GPIO_I2C_SCL,
         .scl_pullup_en = GPIO_PULLUP_ENABLE,
         .master.clk_speed = 200000,
     };
@@ -180,26 +223,43 @@ void input_init(void)
     TRY(i2c_driver_install(I2C_NUM_0, I2C_MODE_MASTER, 0, 0, 0));
     ESP_LOGI(__func__, "I2C driver ready (SDA:%d SCL:%d).\n", i2c_config.sda_io_num, i2c_config.scl_io_num);
     fail:
+#elif CONFIG_TARGET_ESPLAY_S3
+	const i2c_config_t i2c_config = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = RG_GPIO_I2C_SDA,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_io_num = RG_GPIO_I2C_SCL,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = 400000,
+    };
+    esp_err_t err = ESP_FAIL;
+
+    TRY(i2c_param_config(I2C_NUM_0, &i2c_config));
+    TRY(i2c_driver_install(I2C_NUM_0, I2C_MODE_MASTER, 0, 0, 0));
+    ESP_LOGI(__func__, "I2C driver ready (SDA:%d SCL:%d).\n", i2c_config.sda_io_num, i2c_config.scl_io_num);
+
+    gpio_set_direction(RG_GPIO_GAMEPAD_MENU, GPIO_MODE_INPUT);
+    fail:
 #else
-    gpio_set_direction(ODROID_GAMEPAD_IO_SELECT, GPIO_MODE_INPUT);
-    gpio_set_pull_mode(ODROID_GAMEPAD_IO_SELECT, GPIO_PULLUP_ONLY);
+    gpio_set_direction(RG_GPIO_GAMEPAD_SELECT, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(RG_GPIO_GAMEPAD_SELECT, GPIO_PULLUP_ONLY);
 
-    gpio_set_direction(ODROID_GAMEPAD_IO_START, GPIO_MODE_INPUT);
+    gpio_set_direction(RG_GPIO_GAMEPAD_START, GPIO_MODE_INPUT);
 
-    gpio_set_direction(ODROID_GAMEPAD_IO_A, GPIO_MODE_INPUT);
-    gpio_set_pull_mode(ODROID_GAMEPAD_IO_A, GPIO_PULLUP_ONLY);
+    gpio_set_direction(RG_GPIO_GAMEPAD_A, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(RG_GPIO_GAMEPAD_A, GPIO_PULLUP_ONLY);
 
-    gpio_set_direction(ODROID_GAMEPAD_IO_B, GPIO_MODE_INPUT);
-    gpio_set_pull_mode(ODROID_GAMEPAD_IO_B, GPIO_PULLUP_ONLY);
+    gpio_set_direction(RG_GPIO_GAMEPAD_B, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(RG_GPIO_GAMEPAD_B, GPIO_PULLUP_ONLY);
 
     adc1_config_width(ADC_WIDTH_12Bit);
-    adc1_config_channel_atten(ODROID_GAMEPAD_IO_X, ADC_ATTEN_11db);
-    adc1_config_channel_atten(ODROID_GAMEPAD_IO_Y, ADC_ATTEN_11db);
+    adc1_config_channel_atten(RG_GPIO_GAMEPAD_X, ADC_ATTEN_11db);
+    adc1_config_channel_atten(RG_GPIO_GAMEPAD_Y, ADC_ATTEN_11db);
 
-    gpio_set_direction(ODROID_GAMEPAD_IO_MENU, GPIO_MODE_INPUT);
-    gpio_set_pull_mode(ODROID_GAMEPAD_IO_MENU, GPIO_PULLUP_ONLY);
+    gpio_set_direction(RG_GPIO_GAMEPAD_MENU, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(RG_GPIO_GAMEPAD_MENU, GPIO_PULLUP_ONLY);
 
-    gpio_set_direction(ODROID_GAMEPAD_IO_VOLUME, GPIO_MODE_INPUT);
+//    gpio_set_direction(RG_GPIO_GAMEPAD_VOLUME, GPIO_MODE_INPUT);
 #endif
 
     // Start background polling

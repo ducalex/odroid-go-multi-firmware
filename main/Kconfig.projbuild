@@ -1,0 +1,16 @@
+menu "Hardware configuration"
+    choice EMULATOR_HARDWARE
+        prompt "Hardware to run on"
+        default TARGET_ODROID_GO
+        help
+            This emulator can run on various types of hardware. Select what you have here.
+        config TARGET_ODROID_GO
+            bool "ODROID-GO Hardware"
+        config TARGET_MRGC_G32
+            bool "MyRetroGameCase G32 Hardware"
+        config TARGET_RETRO_ESP32
+            bool "RETRO ESP32 Hardware"
+        config TARGET_ESPLAY_S3
+            bool "ESPLAY S3 Hardware (ESP32S3N8R8 Based)"
+    endchoice
+endmenu
